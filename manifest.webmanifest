@@ -1,7 +1,7 @@
 {
-  "name": "Gotland Inventering",
-  "short_name": "Inventering",
-  "description": "Inventeringsapp för Gotland",
+  "name": "Lager Gotland",
+  "short_name": "Lager Gotland",
+  "description": "Lager- och inventeringsapp för Gotland",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

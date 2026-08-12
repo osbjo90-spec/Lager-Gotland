@@ -8,12 +8,12 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Gotland Inventering">
+<meta name="apple-mobile-web-app-title" content="Lager Gotland">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
 
-<title>Gotland Inventering v23</title>
+<title>Lager Gotland</title>
 <style>
 :root{--blue:#d71920;--green:#179447;--bg:#f4f6f8;--card:#fff;--line:#dfe5ea;--muted:#66737d}
 *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:#14202a}
@@ -81,9 +81,10 @@ nav{z-index:30}
 </style>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@4.15.0/lib/msal-browser.min.js"></script>
+<script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
 </head>
 <body>
-<header>Gotland Inventering <span style="font-size:12px;font-weight:600;opacity:.8">v23 • Supabase • Mobil</span></header>
+<header>Lager Gotland</header>
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -119,6 +120,7 @@ nav{z-index:30}
 <section id="search" class="screen">
 <div class="card"><b>Sök artikel</b><p class="muted">Sök på artikelnummer eller benämning.</p>
 <div class="searchline"><input id="q" placeholder="Artikelnummer eller namn…"><button class="primary" onclick="renderSearch()">Sök</button></div>
+<button class="primary" style="width:100%;margin-top:10px" onclick="startScanner()">📷 Skanna QR / streckkod</button>
 <button class="green" style="width:100%;margin-top:10px" onclick="show('newpart')">＋ Lägg till ny del</button>
 </div>
 <div class="card"><div id="results"></div></div>
@@ -201,6 +203,16 @@ nav{z-index:30}
 <div class="card"><div id="leftList"></div></div>
 </section>
 </main>
+
+
+<div id="scannerModal" style="display:none;position:fixed;inset:0;background:#000d;z-index:100;padding:max(16px,env(safe-area-inset-top)) 14px 14px">
+  <div style="max-width:560px;margin:auto;background:white;border-radius:16px;padding:12px">
+    <div class="row between"><b>Skanna artikel</b><button onclick="stopScanner()">✕ Stäng</button></div>
+    <p class="muted">Rikta kameran mot QR-koden eller streckkoden.</p>
+    <video id="scannerVideo" playsinline style="width:100%;max-height:65vh;background:#111;border-radius:12px"></video>
+    <p id="scannerStatus" class="muted">Startar kamera…</p>
+  </div>
+</div>
 
 <nav>
 <button id="n-home" class="activeNav" onclick="show('home')"><span class="ni">⌂</span>Översikt</button>
@@ -883,11 +895,73 @@ initApp();
 </script>
 
 <script>
+// v24: befintligt 2026-lager räknas som inventerat när ingen tidigare inventeringsstatus finns.
+(function markExistingAsInventoried2026(){
+  try{
+    const key='lagerGotland_inventoryYear';
+    if(localStorage.getItem(key)) return;
+    const existing = JSON.parse(localStorage.getItem('invDone') || '{}');
+    for(const a of (window.data || window.INVENTORY_DATA || [])){
+      if(!existing[a.id]) existing[a.id]={};
+      for(const loc of ['jimmy','oskar','jonathan','lager','kemi']){
+        const l=a.locations && a.locations[loc];
+        if(l && (String(l.qty??'').trim()!=='' || String(l.place??'').trim()!=='')){
+          existing[a.id][loc]=true;
+        }
+      }
+    }
+    localStorage.setItem('invDone',JSON.stringify(existing));
+    localStorage.setItem(key,'2026');
+  }catch(e){ console.log('Inventeringsmarkering 2026:',e); }
+})();
+</script>
+<script>
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch(err => console.log('Service worker:', err));
   });
 }
+
+let barcodeReader = null;
+async function startScanner(){
+  const modal=document.getElementById('scannerModal');
+  const status=document.getElementById('scannerStatus');
+  modal.style.display='block';
+  status.textContent='Startar kamera…';
+  try{
+    if(!window.ZXing) throw new Error('Skannerbiblioteket kunde inte laddas.');
+    barcodeReader = new ZXing.BrowserMultiFormatReader();
+    const devices = await ZXing.BrowserCodeReader.listVideoInputDevices();
+    if(!devices.length) throw new Error('Ingen kamera hittades.');
+    const preferred = devices.find(d=>/back|rear|environment/i.test(d.label)) || devices[devices.length-1];
+    barcodeReader.decodeFromVideoDevice(preferred.deviceId,'scannerVideo',(result,err)=>{
+      if(result){
+        const code=(result.text||'').trim();
+        if(!code) return;
+        stopScanner();
+        document.getElementById('q').value=code;
+        show('search');
+        renderSearch();
+        setTimeout(()=>{
+          const exact = data.find(x=>String(x.id).trim().toLowerCase()===code.toLowerCase());
+          if(exact) openDetail(exact.id);
+          else toast('Ingen exakt artikel hittades för '+code);
+        },100);
+      }
+    });
+    status.textContent='Kameran är igång – håll koden stilla i bilden.';
+  }catch(e){
+    status.textContent='Kameran kunde inte startas: '+e.message;
+  }
+}
+function stopScanner(){
+  try{ if(barcodeReader) barcodeReader.reset(); }catch(e){}
+  barcodeReader=null;
+  const v=document.getElementById('scannerVideo');
+  if(v && v.srcObject) v.srcObject.getTracks().forEach(t=>t.stop());
+  document.getElementById('scannerModal').style.display='none';
+}
+
 </script>
 
 </body></html>
