@@ -3,8 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0b4679">
-<title>Gotland Inventering v19 – Supabase</title>
+<meta name="theme-color" content="#d71920">
+
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Gotland Inventering">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+
+<title>Gotland Inventering v23</title>
 <style>
 :root{--blue:#d71920;--green:#179447;--bg:#f4f6f8;--card:#fff;--line:#dfe5ea;--muted:#66737d}
 *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:#14202a}
@@ -37,12 +46,44 @@ nav button{background:white;border-radius:0;color:#53626d;padding:9px 2px;font-s
 .stockbox .splace{color:#367a25;font-size:11px;margin-left:4px}
 .otherstock{margin-top:12px;padding-top:12px;border-top:1px solid #e0e6ea}
 .cloudok{color:#179447;font-weight:800}.clouderr{color:#c62828;font-weight:800}
+
+/* v23 – mobil/PWA */
+html{-webkit-text-size-adjust:100%;touch-action:manipulation}
+body{min-height:100dvh;overscroll-behavior-y:none}
+header{position:sticky;top:0;z-index:20;padding-top:max(17px,env(safe-area-inset-top));box-shadow:0 1px 5px #0002}
+button,input,textarea,select{font-size:16px}
+button{min-height:46px;touch-action:manipulation}
+nav{z-index:30}
+.toast{z-index:40;max-width:calc(100vw - 28px);text-align:center}
+@media(max-width:560px){
+  main{padding:10px 10px calc(88px + env(safe-area-inset-bottom));max-width:none}
+  header{padding-left:14px;padding-right:14px;font-size:19px}
+  .card{border-radius:14px;padding:13px;margin-bottom:10px}
+  .grid{gap:8px}
+  .place{min-height:100px}
+  .place .icon{font-size:32px}
+  .place b{font-size:15px}
+  .searchline{display:grid;grid-template-columns:1fr auto}
+  .searchline button{min-width:72px}
+  .qty{grid-template-columns:58px 1fr 58px;gap:8px}
+  .qty input{font-size:26px}
+  .stockgrid{grid-template-columns:1fr 1fr}
+  nav button{min-height:58px;padding:6px 2px}
+  .ni{font-size:21px}
+}
+@media(max-width:360px){
+  .grid,.stockgrid{grid-template-columns:1fr}
+}
+@media(display-mode:standalone){
+  header{padding-top:max(17px,env(safe-area-inset-top))}
+}
+
 </style>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@4.15.0/lib/msal-browser.min.js"></script>
 </head>
 <body>
-<header>Gotland Inventering <span style="font-size:12px;font-weight:600;opacity:.8">v20 • Supabase</span></header>
+<header>Gotland Inventering <span style="font-size:12px;font-weight:600;opacity:.8">v23 • Supabase • Mobil</span></header>
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -840,4 +881,13 @@ async function initApp(){
 initApp();
 
 </script>
+
+<script>
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(err => console.log('Service worker:', err));
+  });
+}
+</script>
+
 </body></html>
