@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v31.2 -->
+<!-- v32 -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -119,8 +119,35 @@ nav{z-index:30}
 <div class="card">
 <button class="primary" style="width:100%" onclick="openRefill()">📦 Påfyllningslista</button>
 </div>
+<div class="card"><button class="primary" style="width:100%" onclick="openTodos()">📝 ToDo / Jobb <span id="todoHomeBadge"></span></button></div>
 </section>
 
+<section id="todo" class="screen">
+<div class="card">
+  <div class="row between"><b>📝 ToDo / Jobb</b><button class="primary" onclick="openTodoForm()">+ Nytt jobb</button></div>
+  <p class="muted">Gemensam arbetslista för servicejobb och delar som behöver beställas.</p>
+  <select id="todoFilter" onchange="renderTodos()">
+    <option value="open">Aktiva jobb</option><option value="order">Behöver beställas</option>
+    <option value="all">Alla jobb</option><option value="done">Klara jobb</option>
+  </select>
+</div>
+<div id="todoList"></div>
+</section>
+<div id="todoModal" style="display:none;position:fixed;inset:0;background:#0009;z-index:110;padding:16px;overflow:auto">
+<div style="max-width:540px;margin:3vh auto;background:#fff;border-radius:16px;padding:16px">
+<div class="row between"><b id="todoModalTitle">Nytt jobb</b><button onclick="closeTodoForm()">✕</button></div>
+<label class="muted">Kund / gård</label><input id="todoCustomer" placeholder="T.ex. Anderssons Gård">
+<label class="muted">Typ av jobb</label><input id="todoType" placeholder="T.ex. Service, robotstopp, byte av ventil">
+<label class="muted">Beskrivning</label><textarea id="todoText" rows="3" placeholder="Vad behöver göras?"></textarea>
+<label class="muted">Prioritet</label><select id="todoPriority"><option>Normal</option><option>Hög</option><option>Låg</option></select>
+<label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input id="todoNeedsPart" type="checkbox" onchange="toggleTodoPart()"> Del behöver beställas</label>
+<div id="todoPartFields" style="display:none">
+<label class="muted">Artikelnummer</label><div class="searchline"><input id="todoArticle" placeholder="Artikelnummer"><button onclick="startTodoScanner()">📷 Skanna</button></div>
+<label class="muted">Del / benämning</label><input id="todoPartName" placeholder="Benämning">
+<label class="muted">Antal</label><input id="todoPartQty" type="number" min="1" value="1">
+</div>
+<button class="green" style="width:100%;margin-top:14px" onclick="saveTodo()">Spara jobb</button>
+</div></div>
 <section id="withdraw" class="screen">
 <div class="card">
   <b>📤 Uttag</b>
@@ -1003,6 +1030,14 @@ async function startScanner(){
         const code=(result.getText ? result.getText() : result.text || '').trim();
         if(!code) return;
         stopScanner();
+        if(scannerTarget==='todo'){
+          scannerTarget='search';
+          todoArticle.value=code;
+          const exact=allData().find(x=>String(x.id).trim().toLowerCase()===code.toLowerCase());
+          if(exact) todoPartName.value=exact.name||'';
+          todoModal.style.display='block';
+          return;
+        }
         if(scannerTarget==='withdraw'){
           scannerTarget='search';
           const list=(typeof allData==='function')?allData():(window.data||window.INVENTORY_DATA||[]);
@@ -1421,6 +1456,71 @@ async function refillDirect(id,target,n){
   window.addEventListener('load',()=>setTimeout(syncMinLevels,3000));
 })();
 
+
+let todos=[],todoEditId=null;
+async function syncTodos(){
+  try{
+    if(!sbConnected)return;
+    todos=await sbAll('todo_jobs','*');
+    todos.sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));
+    renderTodos();updateTodoBadge();
+  }catch(e){console.error('Todo sync',e)}
+}
+function openTodos(){show('todo');syncTodos()}
+function updateTodoBadge(){
+  const n=todos.filter(x=>x.status!=='Klar').length;
+  const el=document.getElementById('todoHomeBadge');if(el)el.textContent=n?'('+n+')':'';
+}
+function renderTodos(){
+  const el=document.getElementById('todoList');if(!el)return;
+  const f=document.getElementById('todoFilter')?.value||'open';
+  let list=todos.filter(x=>f==='all'||(f==='open'&&x.status!=='Klar')||(f==='done'&&x.status==='Klar')||(f==='order'&&x.needs_part&&x.status!=='Klar'));
+  el.innerHTML=list.length?list.map(x=>`<div class="card">
+    <div class="row between"><b>${esc(x.customer||'Utan kund')} – ${esc(x.job_type||'Jobb')}</b><span>${esc(x.priority||'Normal')}</span></div>
+    <p>${esc(x.description||'')}</p>
+    ${x.needs_part?`<p><b>📦 Beställ:</b> ${esc(x.article_no||'')} ${esc(x.part_name||'')} × ${Math.max(1,parseInt(x.part_qty,10)||1)}</p>`:''}
+    <div class="row">
+      ${x.status!=='Klar'?`<button class="green" onclick="setTodoDone(${JSON.stringify(x.id)})">✓ Klar</button>`:'<span class="muted">✓ Klar</span>'}
+      <button onclick="editTodo(${JSON.stringify(x.id)})">Ändra</button>
+      <button onclick="deleteTodo(${JSON.stringify(x.id)})">Ta bort</button>
+    </div></div>`).join(''):'<div class="card"><b>Inga jobb här.</b></div>';
+}
+function openTodoForm(x=null){
+  todoEditId=x?.id||null;todoModalTitle.textContent=x?'Ändra jobb':'Nytt jobb';
+  todoCustomer.value=x?.customer||'';todoType.value=x?.job_type||'';todoText.value=x?.description||'';
+  todoPriority.value=x?.priority||'Normal';todoNeedsPart.checked=!!x?.needs_part;
+  todoArticle.value=x?.article_no||'';todoPartName.value=x?.part_name||'';todoPartQty.value=x?.part_qty||1;
+  toggleTodoPart();todoModal.style.display='block';
+}
+function closeTodoForm(){todoModal.style.display='none';scannerTarget='search'}
+function toggleTodoPart(){todoPartFields.style.display=todoNeedsPart.checked?'block':'none'}
+function startTodoScanner(){scannerTarget='todo';startScanner()}
+function editTodo(id){const x=todos.find(t=>String(t.id)===String(id));if(x)openTodoForm(x)}
+async function saveTodo(){
+  const row={customer:todoCustomer.value.trim(),job_type:todoType.value.trim(),description:todoText.value.trim(),
+    priority:todoPriority.value,status:'Aktiv',needs_part:todoNeedsPart.checked,
+    article_no:todoNeedsPart.checked?todoArticle.value.trim():'',part_name:todoNeedsPart.checked?todoPartName.value.trim():'',
+    part_qty:todoNeedsPart.checked?Math.max(1,parseInt(todoPartQty.value,10)||1):1};
+  try{
+    if(todoEditId){
+      const old=todos.find(t=>String(t.id)===String(todoEditId));if(old?.status)row.status=old.status;
+      await sbFetch('todo_jobs?id=eq.'+encodeURIComponent(todoEditId),{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify(row)});
+    }else{
+      await sbFetch('todo_jobs',{method:'POST',headers:{Prefer:'return=minimal'},body:JSON.stringify(row)});
+    }
+    closeTodoForm();await syncTodos();toastMsg('Jobbet sparat');
+  }catch(e){toastMsg('Kunde inte spara jobbet');console.error(e)}
+}
+async function setTodoDone(id){
+  try{await sbFetch('todo_jobs?id=eq.'+encodeURIComponent(id),{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify({status:'Klar'})});await syncTodos();toastMsg('Jobbet markerat klart')}
+  catch(e){toastMsg('Kunde inte uppdatera jobbet')}
+}
+async function deleteTodo(id){
+  if(!confirm('Ta bort jobbet?'))return;
+  try{await sbFetch('todo_jobs?id=eq.'+encodeURIComponent(id),{method:'DELETE'});await syncTodos();toastMsg('Jobbet borttaget')}
+  catch(e){toastMsg('Kunde inte ta bort jobbet')}
+}
+window.addEventListener('load',()=>setTimeout(syncTodos,3500));
 </script>
 
 </body></html>
