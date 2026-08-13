@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v29 -->
+<!-- v30 -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -116,8 +116,20 @@ nav{z-index:30}
     <button style="flex:1" onclick="exportBackup()">🛟 Backup</button>
   </div>
 </div>
+<div class="card">
+<button class="primary" style="width:100%" onclick="openRefill()">📦 Påfyllningslista</button>
+</div>
 </section>
 
+<section id="refill" class="screen">
+<div class="card">
+  <div class="row between"><b>📦 Påfyllningslista</b><button onclick="show('home')">Tillbaka</button></div>
+  <p class="muted">Visar artiklar som ligger under vald miniminivå. Miniminivåer sparas på den här enheten.</p>
+  <label class="muted">Lagerställe</label>
+  <select id="refillPlace" onchange="renderRefill()"></select>
+</div>
+<div id="refillList"></div>
+</section>
 <section id="search" class="screen">
 <div class="card"><b>Sök artikel</b><p class="muted">Sök på artikelnummer eller benämning.</p>
 <div class="searchline"><input id="q" placeholder="Artikelnummer eller namn…"><button class="primary" onclick="renderSearch()">Sök</button></div>
@@ -191,6 +203,14 @@ nav{z-index:30}
 <span class="muted">Inventerat antal</span>
 <div class="qty"><button onclick="chg(-1)">−</button><input type="number" min="0" id="dqty"><button class="primary" onclick="chg(1)">+</button></div>
 <textarea id="note" rows="2" placeholder="Anteckning (valfritt)"></textarea>
+<div class="card" style="margin-top:12px">
+<b>Miniminivå</b>
+<p class="muted">Önskat minsta antal på valt lagerställe.</p>
+<div class="row">
+<input id="minLevel" type="number" min="0" value="0" style="flex:1">
+<button class="green" onclick="saveMinLevel()">Spara nivå</button>
+</div>
+</div>
 <div class="card" style="margin-top:12px">
 <b>Snabbändring</b>
 <p class="muted">Ändrar saldot på valt lagerställe direkt.</p>
@@ -1140,6 +1160,59 @@ async function doTransfer(){
     if(selected===to){dqty.value=tq+n;dold.textContent=(tq+n)+' st'}
     toastMsg('Flyttade '+n+' st');
   }catch(e){toastMsg('Kunde inte flytta delen');console.error(e)}
+}
+
+
+let minLevels={};
+try{minLevels=JSON.parse(localStorage.getItem('lagerGotland_minLevels_v1')||'{}')||{}}catch(e){minLevels={}}
+function minKey(id,p){return p+'|'+id}
+function saveMinLevel(){
+  if(!current)return;
+  const n=Math.max(0,parseInt(minLevel.value,10)||0);
+  minLevels[minKey(current.id,selected)]=n;
+  localStorage.setItem('lagerGotland_minLevels_v1',JSON.stringify(minLevels));
+  toastMsg('Miniminivå sparad');
+}
+function loadMinLevel(){
+  if(!current)return;
+  minLevel.value=minLevels[minKey(current.id,selected)]??0;
+}
+const openItemV30=openItem;
+openItem=function(id){openItemV30(id);setTimeout(loadMinLevel,0)}
+
+function openRefill(){
+  refillPlace.innerHTML='';
+  ['jimmy','oskar','jonathan','lager','kemi'].forEach(p=>{
+    const o=document.createElement('option');o.value=p;o.textContent=names[p];refillPlace.appendChild(o);
+  });
+  refillPlace.value=selected;
+  show('refill');renderRefill();
+}
+function renderRefill(){
+  const p=refillPlace.value||selected;
+  const source='lager';
+  const rows=[];
+  allData().forEach(a=>{
+    const min=Math.max(0,parseInt(minLevels[minKey(a.id,p)],10)||0);
+    if(min<=0)return;
+    const have=Math.max(0,parseInt(a.locations?.[p]?.qty,10)||0);
+    if(have>=min)return;
+    const need=min-have;
+    const warehouse=Math.max(0,parseInt(a.locations?.[source]?.qty,10)||0);
+    rows.push({a,min,have,need,warehouse});
+  });
+  rows.sort((x,y)=>y.need-x.need || x.a.name.localeCompare(y.a.name,'sv'));
+  refillList.innerHTML=rows.length?rows.map(r=>`
+    <div class="card" onclick="selected='${p}';openItem(${JSON.stringify(r.a.id)})">
+      <b>${esc(r.a.id)} – ${esc(r.a.name)}</b>
+      <div class="stockgrid" style="margin-top:8px">
+        <div class="stockbox"><span class="muted">Har</span><b>${r.have}</b></div>
+        <div class="stockbox"><span class="muted">Min</span><b>${r.min}</b></div>
+        <div class="stockbox"><span class="muted">Fyll på</span><b>+${r.need}</b></div>
+        <div class="stockbox"><span class="muted">Lagret har</span><b>${r.warehouse}</b></div>
+      </div>
+      <p class="muted" style="margin-bottom:0">${r.warehouse>=r.need?'✓ Kan fyllas från Lagret':'⚠ Lagret saknar '+(r.need-r.warehouse)+' st'}</p>
+    </div>`).join(''):'<div class="card"><b style="color:#179447">✓ Inget behöver fyllas på</b><p class="muted">Sätt miniminivåer på artiklar för att använda listan.</p></div>';
 }
 
 </script>
