@@ -991,70 +991,68 @@ catch(e){}
 </script>
 
 
+
 <script>
 (function(){
-  const INVENTORY_YEAR='2026';
+  const YEAR='2026';
 
-  function markExisting2026(){
+  function markAllExistingAsInventoried(){
     try{
-      const list = window.data || window.INVENTORY_DATA || [];
-      if(!Array.isArray(list) || !list.length) return;
+      const list=(typeof allData==='function')?allData():(window.data||window.INVENTORY_DATA||[]);
+      if(!Array.isArray(list)||!list.length) return;
 
-      const doneKey='lagerGotland_done_'+INVENTORY_YEAR;
-      let done={};
-      try{ done=JSON.parse(localStorage.getItem(doneKey)||'{}')||{}; }catch(e){}
+      if(typeof inv!=='object' || !inv) inv={};
 
       for(const a of list){
-        if(!done[a.id]) done[a.id]={};
-        const locs=a.locations||{};
-        for(const loc of ['jimmy','oskar','jonathan','lager','kemi']){
-          const l=locs[loc];
+        if(!a || !a.id || !a.locations) continue;
+        for(const p of ['jimmy','oskar','jonathan','lager','kemi']){
+          const l=a.locations[p];
           if(!l) continue;
-          const qty=String(l.qty ?? '').trim();
-          const place=String(l.place ?? '').trim();
-          if(qty!=='' || place!=='') done[a.id][loc]=true;
+          const qty=String(l.qty??'').trim();
+          const place=String(l.place??'').trim();
+
+          // Exactly the same membership rule as rel()
+          if(qty!=='' || place!==''){
+            const k=p+'|'+a.id;
+            const old=inv[k]||{};
+            inv[k]={
+              done:true,
+              qty:Math.max(0,parseInt(qty,10)||0),
+              note:old.note||'Inventerad 2026'
+            };
+          }
         }
       }
-      localStorage.setItem(doneKey, JSON.stringify(done));
-      localStorage.setItem('lagerGotland_inventoryYear', INVENTORY_YEAR);
 
-      // Mirror into common legacy keys used by earlier builds.
-      localStorage.setItem('invDone', JSON.stringify(done));
-      window.inventoryDone = done;
-      window.doneMap = done;
-    }catch(e){ console.log('markExisting2026',e); }
-  }
+      localStorage.setItem('inventory_v2',JSON.stringify(inv));
+      localStorage.setItem('lagerGotland_inventoryYear',YEAR);
 
-  function rerender(){
-    try{
       if(typeof renderHome==='function') renderHome();
-      else if(typeof renderPlaces==='function') renderPlaces();
-    }catch(e){}
+      if(typeof renderSearch==='function') renderSearch();
+      if(typeof renderLeft==='function') renderLeft();
+    }catch(e){ console.log('v26 inventering',e); }
   }
 
   window.addEventListener('load',()=>{
-    setTimeout(()=>{ markExisting2026(); rerender(); }, 1200);
-    setTimeout(()=>{ markExisting2026(); rerender(); }, 3500);
+    setTimeout(markAllExistingAsInventoried,500);
+    setTimeout(markAllExistingAsInventoried,1800);
+    setTimeout(markAllExistingAsInventoried,4000);
   });
 
-  document.addEventListener('visibilitychange',()=>{
-    if(!document.hidden) setTimeout(()=>{ markExisting2026(); rerender(); },500);
-  });
-
-  // Wrap Supabase sync so status is applied after fresh cloud data arrives.
-  const wrapTimer=setInterval(()=>{
-    if(typeof window.loadSupabase==='function' && !window.loadSupabase.__v25wrapped){
+  const t=setInterval(()=>{
+    if(typeof window.loadSupabase==='function' && !window.loadSupabase.__v26wrapped){
       const original=window.loadSupabase;
       const wrapped=async function(...args){
-        const r=await original.apply(this,args);
-        setTimeout(()=>{ markExisting2026(); rerender(); },200);
-        return r;
+        const result=await original.apply(this,args);
+        markAllExistingAsInventoried();
+        setTimeout(markAllExistingAsInventoried,250);
+        return result;
       };
-      wrapped.__v25wrapped=true;
+      wrapped.__v26wrapped=true;
       window.loadSupabase=wrapped;
-      clearInterval(wrapTimer);
+      clearInterval(t);
     }
-  },200);
+  },150);
 })();
 </script>
 
