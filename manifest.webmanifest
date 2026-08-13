@@ -1,7 +1,7 @@
 {
   "name": "Lager Gotland",
   "short_name": "Lager Gotland",
-  "description": "Lager- och inventeringsapp för Gotland – v28",
+  "description": "Lager- och inventeringsapp för Gotland – v29",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
