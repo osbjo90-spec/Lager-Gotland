@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v27 -->
+<!-- v28 -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -142,7 +142,7 @@ nav{z-index:30}
   <option value="kemi">Kemi/Övrigt</option>
 </select>
 <label class="muted" style="display:block;margin-top:10px">Artikelnummer</label>
-<input id="newId" placeholder="T.ex. 123456 7890-00">
+<div class="searchline"><input id="newId" placeholder="T.ex. 123456 7890-00"><button type="button" class="primary" onclick="startNewPartScanner()">📷 Skanna</button></div>
 <label class="muted" style="display:block;margin-top:10px">Benämning</label>
 <input id="newName" placeholder="T.ex. Filter">
 <label class="muted" style="display:block;margin-top:10px">Plats</label>
@@ -925,6 +925,7 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 
 
 let barcodeReader = null;
+let scannerTarget = 'search';
 async function startScanner(){
   const modal=document.getElementById('scannerModal');
   const status=document.getElementById('scannerStatus');
@@ -952,6 +953,20 @@ async function startScanner(){
         const code=(result.getText ? result.getText() : result.text || '').trim();
         if(!code) return;
         stopScanner();
+        if(scannerTarget==='newpart'){
+          scannerTarget='search';
+          const list=(typeof allData==='function')?allData():(window.data||window.INVENTORY_DATA||[]);
+          const existing=list.find(x=>String(x.id).trim().toLowerCase()===code.toLowerCase());
+          const idInput=document.getElementById('newId');
+          if(idInput) idInput.value=code;
+          if(existing){
+            if(confirm('Artikel '+code+' finns redan. Vill du öppna den istället?')) openItem(existing.id);
+          }else{
+            toastMsg('Artikelnummer '+code+' inläst');
+            if(idInput) idInput.focus();
+          }
+          return;
+        }
         const q=document.getElementById('q');
         q.value=code;
         show('search');
@@ -1051,6 +1066,11 @@ function stopScanner(){
     }
   },150);
 })();
+
+function startNewPartScanner(){
+  scannerTarget='newpart';
+  startScanner();
+}
 </script>
 
 </body></html>
