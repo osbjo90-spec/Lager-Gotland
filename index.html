@@ -85,6 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
+<!-- v27 -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -931,6 +932,9 @@ async function startScanner(){
   modal.style.display='block';
   status.textContent='Startar kamera…';
   try{
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      throw new Error('Kameraåtkomst stöds inte av webbläsaren.');
+    }
     if(!window.ZXing || !ZXing.BrowserMultiFormatReader){
       throw new Error('Skannerbiblioteket kunde inte laddas.');
     }
@@ -955,8 +959,8 @@ async function startScanner(){
         setTimeout(()=>{
           const list = window.data || window.INVENTORY_DATA || [];
           const exact = list.find(x=>String(x.id).trim().toLowerCase()===code.toLowerCase());
-          if(exact) openDetail(exact.id);
-          else toast('Ingen exakt artikel hittades för '+code);
+          if(exact) openItem(exact.id);
+          else toastMsg('Ingen exakt artikel hittades för '+code);
         },100);
       }
     });
@@ -981,13 +985,6 @@ function stopScanner(){
   const modal=document.getElementById('scannerModal');
   if(modal) modal.style.display='none';
 }
-catch(e){}
-  barcodeReader=null;
-  const v=document.getElementById('scannerVideo');
-  if(v && v.srcObject) v.srcObject.getTracks().forEach(t=>t.stop());
-  document.getElementById('scannerModal').style.display='none';
-}
-
 </script>
 
 
