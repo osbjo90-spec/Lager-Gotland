@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v32 -->
+<!-- v32.1 -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -117,9 +117,8 @@ nav{z-index:30}
   </div>
 </div>
 <div class="card">
-<button class="primary" style="width:100%" onclick="openRefill()">📦 Påfyllningslista</button>
+<button class="primary" style="width:100%" onclick="openRefill()">📦 Påfyllningslista</button><button onclick="openTodos()">📝<span>ToDo <b id="todoNavBadge"></b></span></button>
 </div>
-<div class="card"><button class="primary" style="width:100%" onclick="openTodos()">📝 ToDo / Jobb <span id="todoHomeBadge"></span></button></div>
 </section>
 
 <section id="todo" class="screen">
@@ -1469,7 +1468,8 @@ async function syncTodos(){
 function openTodos(){show('todo');syncTodos()}
 function updateTodoBadge(){
   const n=todos.filter(x=>x.status!=='Klar').length;
-  const el=document.getElementById('todoHomeBadge');if(el)el.textContent=n?'('+n+')':'';
+  const el=document.getElementById('todoNavBadge');
+  if(el)el.textContent=n?'('+n+')':'';
 }
 function renderTodos(){
   const el=document.getElementById('todoList');if(!el)return;
@@ -1477,10 +1477,11 @@ function renderTodos(){
   let list=todos.filter(x=>f==='all'||(f==='open'&&x.status!=='Klar')||(f==='done'&&x.status==='Klar')||(f==='order'&&x.needs_part&&x.status!=='Klar'));
   el.innerHTML=list.length?list.map(x=>`<div class="card">
     <div class="row between"><b>${esc(x.customer||'Utan kund')} – ${esc(x.job_type||'Jobb')}</b><span>${esc(x.priority||'Normal')}</span></div>
+    <p style="margin:8px 0"><b>${x.status==='Klar'?'✅ Klart':'🟠 Aktivt'}</b></p>
     <p>${esc(x.description||'')}</p>
     ${x.needs_part?`<p><b>📦 Beställ:</b> ${esc(x.article_no||'')} ${esc(x.part_name||'')} × ${Math.max(1,parseInt(x.part_qty,10)||1)}</p>`:''}
     <div class="row">
-      ${x.status!=='Klar'?`<button class="green" onclick="setTodoDone(${JSON.stringify(x.id)})">✓ Klar</button>`:'<span class="muted">✓ Klar</span>'}
+      ${x.status!=='Klar'?`<button onclick="setTodoDone(${JSON.stringify(x.id)})">Markera som klar</button>`:''}
       <button onclick="editTodo(${JSON.stringify(x.id)})">Ändra</button>
       <button onclick="deleteTodo(${JSON.stringify(x.id)})">Ta bort</button>
     </div></div>`).join(''):'<div class="card"><b>Inga jobb här.</b></div>';
