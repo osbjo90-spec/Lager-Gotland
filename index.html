@@ -89,7 +89,7 @@ nav{z-index:30}
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
 <div class="card">
-<div class="row between"><b>Inventeringsstatus – <span id="placeTitle"></span></b><span id="pct">0 %</span></div>
+<div class="row between"><b>Inventeringsstatus 2026 – <span id="placeTitle"></span></b><span id="pct">0 %</span></div>
 <div class="progress"><div id="bar"></div></div>
 <div class="stat"><span>✅ Klart</span><b id="done">0</b></div>
 <div class="stat"><span>🟠 Ej inventerade</span><b id="leftN">0</b></div>
@@ -922,28 +922,39 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
   });
 }
 
+
 let barcodeReader = null;
 async function startScanner(){
   const modal=document.getElementById('scannerModal');
   const status=document.getElementById('scannerStatus');
+  const video=document.getElementById('scannerVideo');
   modal.style.display='block';
   status.textContent='Startar kamera…';
   try{
-    if(!window.ZXing) throw new Error('Skannerbiblioteket kunde inte laddas.');
+    if(!window.ZXing || !ZXing.BrowserMultiFormatReader){
+      throw new Error('Skannerbiblioteket kunde inte laddas.');
+    }
     barcodeReader = new ZXing.BrowserMultiFormatReader();
-    const devices = await ZXing.BrowserCodeReader.listVideoInputDevices();
-    if(!devices.length) throw new Error('Ingen kamera hittades.');
-    const preferred = devices.find(d=>/back|rear|environment/i.test(d.label)) || devices[devices.length-1];
-    barcodeReader.decodeFromVideoDevice(preferred.deviceId,'scannerVideo',(result,err)=>{
+    const constraints = {
+      audio:false,
+      video:{
+        facingMode:{ideal:'environment'},
+        width:{ideal:1280},
+        height:{ideal:720}
+      }
+    };
+    await barcodeReader.decodeFromConstraints(constraints, video, (result, err)=>{
       if(result){
-        const code=(result.text||'').trim();
+        const code=(result.getText ? result.getText() : result.text || '').trim();
         if(!code) return;
         stopScanner();
-        document.getElementById('q').value=code;
+        const q=document.getElementById('q');
+        q.value=code;
         show('search');
         renderSearch();
         setTimeout(()=>{
-          const exact = data.find(x=>String(x.id).trim().toLowerCase()===code.toLowerCase());
+          const list = window.data || window.INVENTORY_DATA || [];
+          const exact = list.find(x=>String(x.id).trim().toLowerCase()===code.toLowerCase());
           if(exact) openDetail(exact.id);
           else toast('Ingen exakt artikel hittades för '+code);
         },100);
@@ -951,17 +962,100 @@ async function startScanner(){
     });
     status.textContent='Kameran är igång – håll koden stilla i bilden.';
   }catch(e){
-    status.textContent='Kameran kunde inte startas: '+e.message;
+    status.textContent='Kameran kunde inte startas: '+(e && e.message ? e.message : e);
   }
 }
 function stopScanner(){
-  try{ if(barcodeReader) barcodeReader.reset(); }catch(e){}
+  try{
+    if(barcodeReader){
+      if(typeof barcodeReader.reset==='function') barcodeReader.reset();
+      if(typeof barcodeReader.stopContinuousDecode==='function') barcodeReader.stopContinuousDecode();
+    }
+  }catch(e){}
+  barcodeReader=null;
+  const v=document.getElementById('scannerVideo');
+  if(v && v.srcObject){
+    try{ v.srcObject.getTracks().forEach(t=>t.stop()); }catch(e){}
+    v.srcObject=null;
+  }
+  const modal=document.getElementById('scannerModal');
+  if(modal) modal.style.display='none';
+}
+catch(e){}
   barcodeReader=null;
   const v=document.getElementById('scannerVideo');
   if(v && v.srcObject) v.srcObject.getTracks().forEach(t=>t.stop());
   document.getElementById('scannerModal').style.display='none';
 }
 
+</script>
+
+
+<script>
+(function(){
+  const INVENTORY_YEAR='2026';
+
+  function markExisting2026(){
+    try{
+      const list = window.data || window.INVENTORY_DATA || [];
+      if(!Array.isArray(list) || !list.length) return;
+
+      const doneKey='lagerGotland_done_'+INVENTORY_YEAR;
+      let done={};
+      try{ done=JSON.parse(localStorage.getItem(doneKey)||'{}')||{}; }catch(e){}
+
+      for(const a of list){
+        if(!done[a.id]) done[a.id]={};
+        const locs=a.locations||{};
+        for(const loc of ['jimmy','oskar','jonathan','lager','kemi']){
+          const l=locs[loc];
+          if(!l) continue;
+          const qty=String(l.qty ?? '').trim();
+          const place=String(l.place ?? '').trim();
+          if(qty!=='' || place!=='') done[a.id][loc]=true;
+        }
+      }
+      localStorage.setItem(doneKey, JSON.stringify(done));
+      localStorage.setItem('lagerGotland_inventoryYear', INVENTORY_YEAR);
+
+      // Mirror into common legacy keys used by earlier builds.
+      localStorage.setItem('invDone', JSON.stringify(done));
+      window.inventoryDone = done;
+      window.doneMap = done;
+    }catch(e){ console.log('markExisting2026',e); }
+  }
+
+  function rerender(){
+    try{
+      if(typeof renderHome==='function') renderHome();
+      else if(typeof renderPlaces==='function') renderPlaces();
+    }catch(e){}
+  }
+
+  window.addEventListener('load',()=>{
+    setTimeout(()=>{ markExisting2026(); rerender(); }, 1200);
+    setTimeout(()=>{ markExisting2026(); rerender(); }, 3500);
+  });
+
+  document.addEventListener('visibilitychange',()=>{
+    if(!document.hidden) setTimeout(()=>{ markExisting2026(); rerender(); },500);
+  });
+
+  // Wrap Supabase sync so status is applied after fresh cloud data arrives.
+  const wrapTimer=setInterval(()=>{
+    if(typeof window.loadSupabase==='function' && !window.loadSupabase.__v25wrapped){
+      const original=window.loadSupabase;
+      const wrapped=async function(...args){
+        const r=await original.apply(this,args);
+        setTimeout(()=>{ markExisting2026(); rerender(); },200);
+        return r;
+      };
+      wrapped.__v25wrapped=true;
+      window.loadSupabase=wrapped;
+      clearInterval(wrapTimer);
+    }
+  },200);
+})();
 </script>
 
 </body></html>
