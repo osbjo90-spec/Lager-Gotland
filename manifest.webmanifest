@@ -1,7 +1,7 @@
 {
   "name": "Lager Gotland",
   "short_name": "Lager Gotland",
-  "description": "Lager Gotland – v32.2 med ansvarig i ToDo",
+  "description": "Lager Gotland – v32.3 med beställningsstatus",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

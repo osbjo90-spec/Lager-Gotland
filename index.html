@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v32.2 -->
+<!-- v32.3 -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -159,6 +159,12 @@ nav{z-index:30}
 <label class="muted">Artikelnummer</label><div class="searchline"><input id="todoArticle" placeholder="Artikelnummer"><button onclick="startTodoScanner()">📷 Skanna</button></div>
 <label class="muted">Del / benämning</label><input id="todoPartName" placeholder="Benämning">
 <label class="muted">Antal</label><input id="todoPartQty" type="number" min="1" value="1">
+<label class="muted" style="display:block;margin-top:10px">Beställningsstatus</label>
+<select id="todoPartStatus">
+  <option value="Behöver beställas">🟠 Behöver beställas</option>
+  <option value="Beställd">🔵 Beställd</option>
+  <option value="Levererad">🟢 Levererad</option>
+</select>
 </div>
 <button class="green" style="width:100%;margin-top:14px" onclick="saveTodo()">Spara jobb</button>
 </div></div>
@@ -1497,7 +1503,14 @@ function renderTodos(){
     <div class="row between"><b>${esc(x.customer||'Utan kund')} – ${esc(x.job_type||'Jobb')}</b><span>${esc(x.priority||'Normal')}</span></div>
     <p style="margin:8px 0"><b>${x.status==='Klar'?'✅ Klart':'🟠 Aktivt'}</b>${x.assigned_to?` &nbsp; 👤 ${esc(x.assigned_to)}`:''}</p>
     <p>${esc(x.description||'')}</p>
-    ${x.needs_part?`<p><b>📦 Beställ:</b> ${esc(x.article_no||'')} ${esc(x.part_name||'')} × ${Math.max(1,parseInt(x.part_qty,10)||1)}</p>`:''}
+    ${x.needs_part?`<div class="card" style="margin:10px 0;background:#fafafa">
+      <p style="margin:0 0 6px"><b>📦 Del:</b> ${esc(x.article_no||'')} ${esc(x.part_name||'')} × ${Math.max(1,parseInt(x.part_qty,10)||1)}</p>
+      <p style="margin:0 0 8px"><b>${x.part_status==='Levererad'?'🟢 Levererad':x.part_status==='Beställd'?'🔵 Beställd':'🟠 Behöver beställas'}</b></p>
+      <div class="row">
+        ${x.part_status!=='Beställd'&&x.part_status!=='Levererad'?`<button onclick="setPartStatus(${JSON.stringify(x.id)},'Beställd')">Markera beställd</button>`:''}
+        ${x.part_status==='Beställd'?`<button class="green" onclick="setPartStatus(${JSON.stringify(x.id)},'Levererad')">Markera levererad</button>`:''}
+      </div>
+    </div>`:''}
     <div class="row">
       ${x.status!=='Klar'?`<button onclick="setTodoDone(${JSON.stringify(x.id)})">Markera som klar</button>`:''}
       <button onclick="editTodo(${JSON.stringify(x.id)})">Ändra</button>
@@ -1508,7 +1521,7 @@ function openTodoForm(x=null){
   todoEditId=x?.id||null;todoModalTitle.textContent=x?'Ändra jobb':'Nytt jobb';
   todoCustomer.value=x?.customer||'';todoType.value=x?.job_type||'';todoText.value=x?.description||'';
   todoPriority.value=x?.priority||'Normal';todoAssignee.value=x?.assigned_to||'';todoNeedsPart.checked=!!x?.needs_part;
-  todoArticle.value=x?.article_no||'';todoPartName.value=x?.part_name||'';todoPartQty.value=x?.part_qty||1;
+  todoArticle.value=x?.article_no||'';todoPartName.value=x?.part_name||'';todoPartQty.value=x?.part_qty||1;todoPartStatus.value=x?.part_status||'Behöver beställas';
   toggleTodoPart();todoModal.style.display='block';
 }
 function closeTodoForm(){todoModal.style.display='none';scannerTarget='search'}
@@ -1519,7 +1532,8 @@ async function saveTodo(){
   const row={customer:todoCustomer.value.trim(),job_type:todoType.value.trim(),description:todoText.value.trim(),
     priority:todoPriority.value,assigned_to:todoAssignee.value,status:'Aktiv',needs_part:todoNeedsPart.checked,
     article_no:todoNeedsPart.checked?todoArticle.value.trim():'',part_name:todoNeedsPart.checked?todoPartName.value.trim():'',
-    part_qty:todoNeedsPart.checked?Math.max(1,parseInt(todoPartQty.value,10)||1):1};
+    part_qty:todoNeedsPart.checked?Math.max(1,parseInt(todoPartQty.value,10)||1):1,
+    part_status:todoNeedsPart.checked?todoPartStatus.value:''};
   try{
     if(todoEditId){
       const old=todos.find(t=>String(t.id)===String(todoEditId));if(old?.status)row.status=old.status;
@@ -1540,6 +1554,21 @@ async function deleteTodo(id){
   catch(e){toastMsg('Kunde inte ta bort jobbet')}
 }
 window.addEventListener('load',()=>setTimeout(syncTodos,3500));
+
+async function setPartStatus(id,status){
+  try{
+    await sbFetch('todo_jobs?id=eq.'+encodeURIComponent(id),{
+      method:'PATCH',
+      headers:{Prefer:'return=minimal'},
+      body:JSON.stringify({part_status:status})
+    });
+    await syncTodos();
+    toastMsg(status==='Beställd'?'Delen markerad beställd':'Delen markerad levererad');
+  }catch(e){
+    toastMsg('Kunde inte uppdatera beställningsstatus');
+    console.error(e);
+  }
+}
 </script>
 
 </body></html>
