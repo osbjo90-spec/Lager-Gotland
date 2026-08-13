@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v30 -->
+<!-- v31 -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -121,6 +121,19 @@ nav{z-index:30}
 </div>
 </section>
 
+<section id="withdraw" class="screen">
+<div class="card">
+  <b>📤 Uttag</b>
+  <p class="muted">Skanna en del eller sök artikelnummer. Välj sedan var delen tas från.</p>
+  <button class="primary" style="width:100%" onclick="startWithdrawScanner()">📷 Skanna del</button>
+  <div class="searchline" style="margin-top:10px">
+    <input id="withdrawQ" placeholder="Artikelnummer eller namn…">
+    <button onclick="renderWithdrawSearch()">Sök</button>
+  </div>
+</div>
+<div id="withdrawResults"></div>
+<div id="withdrawAction" style="display:none"></div>
+</section>
 <section id="refill" class="screen">
 <div class="card">
   <div class="row between"><b>📦 Påfyllningslista</b><button onclick="show('home')">Tillbaka</button></div>
@@ -255,8 +268,8 @@ nav{z-index:30}
 <nav>
 <button id="n-home" class="activeNav" onclick="show('home')"><span class="ni">⌂</span>Översikt</button>
 <button id="n-search" onclick="show('search')"><span class="ni">⌕</span>Sök</button>
-<button id="n-left" onclick="show('left')"><span class="ni">☷</span>Ej inventerade</button>
-<button onclick="exportCSV()"><span class="ni">▥</span>Export</button>
+<button id="n-withdraw" onclick="openWithdraw()"><span class="ni">📤</span>Uttag</button>
+<button id="n-refill" onclick="openRefill()"><span class="ni">📦</span><span id="refillNavText">Påfyllning</span></button>
 </nav>
 <div class="toast" id="toast"></div>
 <script>
@@ -990,6 +1003,19 @@ async function startScanner(){
         const code=(result.getText ? result.getText() : result.text || '').trim();
         if(!code) return;
         stopScanner();
+        if(scannerTarget==='withdraw'){
+          scannerTarget='search';
+          const list=(typeof allData==='function')?allData():(window.data||window.INVENTORY_DATA||[]);
+          const exact=list.find(x=>String(x.id).trim().toLowerCase()===code.toLowerCase());
+          show('withdraw');
+          if(exact) selectWithdraw(exact.id);
+          else {
+            withdrawQ.value=code;
+            renderWithdrawSearch();
+            toastMsg('Ingen exakt artikel hittades');
+          }
+          return;
+        }
         if(scannerTarget==='newpart'){
           scannerTarget='search';
           const list=(typeof allData==='function')?allData():(window.data||window.INVENTORY_DATA||[]);
@@ -1171,7 +1197,7 @@ function saveMinLevel(){
   const n=Math.max(0,parseInt(minLevel.value,10)||0);
   minLevels[minKey(current.id,selected)]=n;
   localStorage.setItem('lagerGotland_minLevels_v1',JSON.stringify(minLevels));
-  toastMsg('Miniminivå sparad');
+  toastMsg('Miniminivå sparad');updateRefillBadge();
 }
 function loadMinLevel(){
   if(!current)return;
@@ -1214,6 +1240,89 @@ function renderRefill(){
       <p class="muted" style="margin-bottom:0">${r.warehouse>=r.need?'✓ Kan fyllas från Lagret':'⚠ Lagret saknar '+(r.need-r.warehouse)+' st'}</p>
     </div>`).join(''):'<div class="card"><b style="color:#179447">✓ Inget behöver fyllas på</b><p class="muted">Sätt miniminivåer på artiklar för att använda listan.</p></div>';
 }
+
+
+function refillCount(){
+  try{
+    let c=0;
+    for(const a of allData()){
+      for(const p of ['jimmy','oskar','jonathan']){
+        const min=Math.max(0,parseInt(minLevels[minKey(a.id,p)],10)||0);
+        const have=Math.max(0,parseInt(a.locations?.[p]?.qty,10)||0);
+        if(min>0 && have<min)c++;
+      }
+    }
+    return c;
+  }catch(e){return 0}
+}
+function updateRefillBadge(){
+  const el=document.getElementById('refillNavText');
+  if(!el)return;
+  const c=refillCount();
+  el.textContent=c?'Påfyllning '+c:'Påfyllning';
+}
+
+let withdrawCurrent=null;
+function openWithdraw(){
+  withdrawCurrent=null;
+  withdrawAction.style.display='none';
+  withdrawResults.innerHTML='';
+  withdrawQ.value='';
+  show('withdraw');
+}
+function startWithdrawScanner(){
+  scannerTarget='withdraw';
+  startScanner();
+}
+function renderWithdrawSearch(){
+  const q=(withdrawQ.value||'').trim().toLowerCase();
+  if(!q){withdrawResults.innerHTML='';return}
+  const a=allData().filter(x=>x.id.toLowerCase().includes(q)||x.name.toLowerCase().includes(q)).slice(0,30);
+  withdrawResults.innerHTML=a.map(x=>`<div class="card" onclick="selectWithdraw(${JSON.stringify(x.id)})"><b>${esc(x.id)}</b><br>${esc(x.name)}</div>`).join('')||'<div class="card">Ingen artikel hittades.</div>';
+}
+function selectWithdraw(id){
+  withdrawCurrent=allData().find(x=>x.id===id);
+  if(!withdrawCurrent)return;
+  withdrawResults.innerHTML='';
+  const ps=['jimmy','oskar','jonathan','lager','kemi'];
+  withdrawAction.style.display='block';
+  withdrawAction.innerHTML=`<div class="card">
+    <b>${esc(withdrawCurrent.id)} – ${esc(withdrawCurrent.name)}</b>
+    <p class="muted">Välj var delen tas från:</p>
+    <select id="withdrawPlace">
+      ${ps.map(p=>`<option value="${p}" ${p===selected?'selected':''}>${names[p]} (${Math.max(0,parseInt(withdrawCurrent.locations?.[p]?.qty,10)||0)} st)</option>`).join('')}
+    </select>
+    <p class="muted" style="margin-top:10px">Antal att ta ut</p>
+    <div class="row">
+      <button onclick="doWithdraw(1)">−1</button>
+      <button onclick="doWithdraw(2)">−2</button>
+      <button onclick="doWithdraw(5)">−5</button>
+    </div>
+    <div class="searchline" style="margin-top:10px">
+      <input id="withdrawAmount" type="number" min="1" value="1">
+      <button class="primary" onclick="doWithdraw(parseInt(withdrawAmount.value)||1)">Ta ut</button>
+    </div>
+  </div>`;
+}
+async function doWithdraw(n){
+  if(!withdrawCurrent)return;
+  n=Math.max(1,parseInt(n,10)||1);
+  const p=withdrawPlace.value;
+  const l=withdrawCurrent.locations?.[p]||{qty:'0',place:''};
+  const have=Math.max(0,parseInt(l.qty,10)||0);
+  if(have<n){toastMsg('Det finns bara '+have+' st');return}
+  try{
+    await setStockV29(withdrawCurrent,p,have-n,l.place||'');
+    toastMsg('Tog ut '+n+' st från '+names[p]);
+    updateRefillBadge();
+    selectWithdraw(withdrawCurrent.id);
+  }catch(e){
+    toastMsg('Kunde inte registrera uttaget');
+    console.error(e);
+  }
+}
+
+window.addEventListener('load',()=>setTimeout(updateRefillBadge,2500));
 
 </script>
 
