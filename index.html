@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v31 -->
+<!-- v31.1 -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -1229,7 +1229,7 @@ function renderRefill(){
   });
   rows.sort((x,y)=>y.need-x.need || x.a.name.localeCompare(y.a.name,'sv'));
   refillList.innerHTML=rows.length?rows.map(r=>`
-    <div class="card" onclick="selected='${p}';openItem(${JSON.stringify(r.a.id)})">
+    <div class="card">
       <b>${esc(r.a.id)} – ${esc(r.a.name)}</b>
       <div class="stockgrid" style="margin-top:8px">
         <div class="stockbox"><span class="muted">Har</span><b>${r.have}</b></div>
@@ -1237,7 +1237,11 @@ function renderRefill(){
         <div class="stockbox"><span class="muted">Fyll på</span><b>+${r.need}</b></div>
         <div class="stockbox"><span class="muted">Lagret har</span><b>${r.warehouse}</b></div>
       </div>
-      <p class="muted" style="margin-bottom:0">${r.warehouse>=r.need?'✓ Kan fyllas från Lagret':'⚠ Lagret saknar '+(r.need-r.warehouse)+' st'}</p>
+      <p class="muted">${r.warehouse>=r.need?'✓ Kan fyllas från Lagret':'⚠ Lagret saknar '+(r.need-r.warehouse)+' st'}</p>
+      <div class="row">
+        <button style="flex:1" onclick="openRefillItem(r.a.id,p)">Öppna artikel</button>
+        <button class="green" style="flex:1" onclick="refillDirect(r.a.id,p,Math.min(r.need,r.warehouse))" ${r.warehouse<1||p==='lager'?'disabled':''}>🔄 Fyll på ${Math.min(r.need,r.warehouse)} st</button>
+      </div>
     </div>`).join(''):'<div class="card"><b style="color:#179447">✓ Inget behöver fyllas på</b><p class="muted">Sätt miniminivåer på artiklar för att använda listan.</p></div>';
 }
 
@@ -1324,6 +1328,23 @@ async function doWithdraw(n){
 
 window.addEventListener('load',()=>setTimeout(updateRefillBadge,2500));
 
+
+function openRefillItem(id,p){selected=p;openItem(id)}
+async function refillDirect(id,target,n){
+  n=Math.max(0,parseInt(n,10)||0);
+  if(n<1){toastMsg('Inget finns att fylla på från Lagret');return}
+  if(target==='lager'){toastMsg('Välj en bil som mål');return}
+  const a=allData().find(x=>x.id===id);if(!a)return;
+  const fl=a.locations?.lager||{qty:'0',place:''},tl=a.locations?.[target]||{qty:'0',place:''};
+  const fq=Math.max(0,parseInt(fl.qty,10)||0),tq=Math.max(0,parseInt(tl.qty,10)||0);
+  n=Math.min(n,fq);if(n<1){toastMsg('Lagret har inget saldo');return}
+  try{
+    await setStockV29(a,'lager',fq-n,fl.place||'');
+    await setStockV29(a,target,tq+n,tl.place||'');
+    toastMsg('Fyllde på '+n+' st till '+names[target]);
+    renderRefill();updateRefillBadge();
+  }catch(e){toastMsg('Kunde inte fylla på');console.error(e)}
+}
 </script>
 
 </body></html>
