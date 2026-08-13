@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v32.1 -->
+<!-- v32.2 -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -125,10 +125,18 @@ nav{z-index:30}
 <div class="card">
   <div class="row between"><b>📝 ToDo / Jobb</b><button class="primary" onclick="openTodoForm()">+ Nytt jobb</button></div>
   <p class="muted">Gemensam arbetslista för servicejobb och delar som behöver beställas.</p>
-  <select id="todoFilter" onchange="renderTodos()">
+  <div class="row" style="margin-top:8px">
+  <select id="todoFilter" onchange="renderTodos()" style="flex:1">
     <option value="open">Aktiva jobb</option><option value="order">Behöver beställas</option>
     <option value="all">Alla jobb</option><option value="done">Klara jobb</option>
   </select>
+  <select id="todoAssigneeFilter" onchange="renderTodos()" style="flex:1">
+    <option value="all">Alla ansvariga</option>
+    <option value="Jimmy">Jimmy</option>
+    <option value="Oskar">Oskar</option>
+    <option value="Jonathan">Jonathan</option>
+  </select>
+</div>
 </div>
 <div id="todoList"></div>
 </section>
@@ -139,6 +147,13 @@ nav{z-index:30}
 <label class="muted">Typ av jobb</label><input id="todoType" placeholder="T.ex. Service, robotstopp, byte av ventil">
 <label class="muted">Beskrivning</label><textarea id="todoText" rows="3" placeholder="Vad behöver göras?"></textarea>
 <label class="muted">Prioritet</label><select id="todoPriority"><option>Normal</option><option>Hög</option><option>Låg</option></select>
+<label class="muted" style="display:block;margin-top:10px">Ansvarig</label>
+<select id="todoAssignee">
+  <option value="">Ingen vald</option>
+  <option value="Jimmy">Jimmy</option>
+  <option value="Oskar">Oskar</option>
+  <option value="Jonathan">Jonathan</option>
+</select>
 <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input id="todoNeedsPart" type="checkbox" onchange="toggleTodoPart()"> Del behöver beställas</label>
 <div id="todoPartFields" style="display:none">
 <label class="muted">Artikelnummer</label><div class="searchline"><input id="todoArticle" placeholder="Artikelnummer"><button onclick="startTodoScanner()">📷 Skanna</button></div>
@@ -291,11 +306,12 @@ nav{z-index:30}
   </div>
 </div>
 
-<nav>
-<button id="n-home" class="activeNav" onclick="show('home')"><span class="ni">⌂</span>Översikt</button>
-<button id="n-search" onclick="show('search')"><span class="ni">⌕</span>Sök</button>
-<button id="n-withdraw" onclick="openWithdraw()"><span class="ni">📤</span>Uttag</button>
+<nav style="grid-template-columns:repeat(5,1fr)">
+<button id="n-home" class="activeNav" onclick="show('home')"><span class="ni">⌂</span><span>Översikt</span></button>
+<button id="n-search" onclick="show('search')"><span class="ni">⌕</span><span>Sök</span></button>
+<button id="n-withdraw" onclick="openWithdraw()"><span class="ni">📤</span><span>Uttag</span></button>
 <button id="n-refill" onclick="openRefill()"><span class="ni">📦</span><span id="refillNavText">Påfyllning</span></button>
+<button id="n-todo" onclick="openTodos()"><span class="ni">📝</span><span>ToDo <b id="todoNavBadge"></b></span></button>
 </nav>
 <div class="toast" id="toast"></div>
 <script>
@@ -1475,9 +1491,11 @@ function renderTodos(){
   const el=document.getElementById('todoList');if(!el)return;
   const f=document.getElementById('todoFilter')?.value||'open';
   let list=todos.filter(x=>f==='all'||(f==='open'&&x.status!=='Klar')||(f==='done'&&x.status==='Klar')||(f==='order'&&x.needs_part&&x.status!=='Klar'));
+  const af=document.getElementById('todoAssigneeFilter')?.value||'all';
+  if(af!=='all')list=list.filter(x=>(x.assigned_to||'')===af);
   el.innerHTML=list.length?list.map(x=>`<div class="card">
     <div class="row between"><b>${esc(x.customer||'Utan kund')} – ${esc(x.job_type||'Jobb')}</b><span>${esc(x.priority||'Normal')}</span></div>
-    <p style="margin:8px 0"><b>${x.status==='Klar'?'✅ Klart':'🟠 Aktivt'}</b></p>
+    <p style="margin:8px 0"><b>${x.status==='Klar'?'✅ Klart':'🟠 Aktivt'}</b>${x.assigned_to?` &nbsp; 👤 ${esc(x.assigned_to)}`:''}</p>
     <p>${esc(x.description||'')}</p>
     ${x.needs_part?`<p><b>📦 Beställ:</b> ${esc(x.article_no||'')} ${esc(x.part_name||'')} × ${Math.max(1,parseInt(x.part_qty,10)||1)}</p>`:''}
     <div class="row">
@@ -1489,7 +1507,7 @@ function renderTodos(){
 function openTodoForm(x=null){
   todoEditId=x?.id||null;todoModalTitle.textContent=x?'Ändra jobb':'Nytt jobb';
   todoCustomer.value=x?.customer||'';todoType.value=x?.job_type||'';todoText.value=x?.description||'';
-  todoPriority.value=x?.priority||'Normal';todoNeedsPart.checked=!!x?.needs_part;
+  todoPriority.value=x?.priority||'Normal';todoAssignee.value=x?.assigned_to||'';todoNeedsPart.checked=!!x?.needs_part;
   todoArticle.value=x?.article_no||'';todoPartName.value=x?.part_name||'';todoPartQty.value=x?.part_qty||1;
   toggleTodoPart();todoModal.style.display='block';
 }
@@ -1499,7 +1517,7 @@ function startTodoScanner(){scannerTarget='todo';startScanner()}
 function editTodo(id){const x=todos.find(t=>String(t.id)===String(id));if(x)openTodoForm(x)}
 async function saveTodo(){
   const row={customer:todoCustomer.value.trim(),job_type:todoType.value.trim(),description:todoText.value.trim(),
-    priority:todoPriority.value,status:'Aktiv',needs_part:todoNeedsPart.checked,
+    priority:todoPriority.value,assigned_to:todoAssignee.value,status:'Aktiv',needs_part:todoNeedsPart.checked,
     article_no:todoNeedsPart.checked?todoArticle.value.trim():'',part_name:todoNeedsPart.checked?todoPartName.value.trim():'',
     part_qty:todoNeedsPart.checked?Math.max(1,parseInt(todoPartQty.value,10)||1):1};
   try{
