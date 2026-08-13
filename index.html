@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v31.1 -->
+<!-- v31.2 -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -1192,12 +1192,64 @@ async function doTransfer(){
 let minLevels={};
 try{minLevels=JSON.parse(localStorage.getItem('lagerGotland_minLevels_v1')||'{}')||{}}catch(e){minLevels={}}
 function minKey(id,p){return p+'|'+id}
-function saveMinLevel(){
+
+async function upsertMinLevelCloud(articleId,p,n){
+  const body={artikelnummer:String(articleId),plats:String(p),min_antal:Math.max(0,parseInt(n,10)||0)};
+  await sbFetch('miniminiva?on_conflict=artikelnummer,plats',{
+    method:'POST',
+    headers:{Prefer:'resolution=merge-duplicates,return=minimal'},
+    body:JSON.stringify(body)
+  });
+}
+async function syncMinLevels(){
+  try{
+    if(!sbConnected)return false;
+    const cloud=await sbAll('miniminiva','artikelnummer,plats,min_antal');
+    const cloudKeys=new Set();
+    for(const r of cloud){
+      const k=minKey(String(r.artikelnummer),String(r.plats));
+      minLevels[k]=Math.max(0,parseInt(r.min_antal,10)||0);
+      cloudKeys.add(k);
+    }
+
+    // För över gamla lokala nivåer till Supabase en gång, så testdata inte försvinner.
+    const pending=[];
+    for(const [k,v] of Object.entries(minLevels)){
+      if(cloudKeys.has(k))continue;
+      const split=k.indexOf('|');
+      if(split<1)continue;
+      const p=k.slice(0,split),id=k.slice(split+1);
+      const n=Math.max(0,parseInt(v,10)||0);
+      if(n>0)pending.push(upsertMinLevelCloud(id,p,n));
+    }
+    if(pending.length)await Promise.all(pending);
+
+    localStorage.setItem('lagerGotland_minLevels_v1',JSON.stringify(minLevels));
+    updateRefillBadge();
+    if(document.getElementById('refill')?.classList.contains('active'))renderRefill();
+    return true;
+  }catch(e){
+    console.error('Miniminivå-synk:',e);
+    return false;
+  }
+}
+async function saveMinLevel(){
   if(!current)return;
   const n=Math.max(0,parseInt(minLevel.value,10)||0);
   minLevels[minKey(current.id,selected)]=n;
   localStorage.setItem('lagerGotland_minLevels_v1',JSON.stringify(minLevels));
-  toastMsg('Miniminivå sparad');updateRefillBadge();
+  try{
+    if(sbConnected){
+      await upsertMinLevelCloud(current.id,selected,n);
+      toastMsg('Miniminivå sparad gemensamt');
+    }else{
+      toastMsg('Miniminivå sparad lokalt');
+    }
+  }catch(e){
+    toastMsg('Nivån sparades lokalt – Supabase misslyckades');
+    console.error(e);
+  }
+  updateRefillBadge();
 }
 function loadMinLevel(){
   if(!current)return;
@@ -1239,8 +1291,8 @@ function renderRefill(){
       </div>
       <p class="muted">${r.warehouse>=r.need?'✓ Kan fyllas från Lagret':'⚠ Lagret saknar '+(r.need-r.warehouse)+' st'}</p>
       <div class="row">
-        <button style="flex:1" onclick="openRefillItem(r.a.id,p)">Öppna artikel</button>
-        <button class="green" style="flex:1" onclick="refillDirect(r.a.id,p,Math.min(r.need,r.warehouse))" ${r.warehouse<1||p==='lager'?'disabled':''}>🔄 Fyll på ${Math.min(r.need,r.warehouse)} st</button>
+        <button style="flex:1" onclick='openRefillItem(${JSON.stringify(r.a.id)},${JSON.stringify(p)})'>Öppna artikel</button>
+        <button class="green" style="flex:1" onclick='refillDirect(${JSON.stringify(r.a.id)},${JSON.stringify(p)},${Math.min(r.need,r.warehouse)})' ${r.warehouse<1||p==='lager'?'disabled':''}>🔄 Fyll på ${Math.min(r.need,r.warehouse)} st</button>
       </div>
     </div>`).join(''):'<div class="card"><b style="color:#179447">✓ Inget behöver fyllas på</b><p class="muted">Sätt miniminivåer på artiklar för att använda listan.</p></div>';
 }
@@ -1329,7 +1381,13 @@ async function doWithdraw(n){
 window.addEventListener('load',()=>setTimeout(updateRefillBadge,2500));
 
 
-function openRefillItem(id,p){selected=p;openItem(id)}
+function openRefillItem(id,p){
+  selected=p;
+  const a=allData().find(x=>String(x.id)===String(id));
+  if(!a){toastMsg('Artikeln kunde inte öppnas');return}
+  openItem(a.id);
+  show('detail');
+}
 async function refillDirect(id,target,n){
   n=Math.max(0,parseInt(n,10)||0);
   if(n<1){toastMsg('Inget finns att fylla på från Lagret');return}
@@ -1345,6 +1403,24 @@ async function refillDirect(id,target,n){
     renderRefill();updateRefillBadge();
   }catch(e){toastMsg('Kunde inte fylla på');console.error(e)}
 }
+
+(function(){
+  const t=setInterval(()=>{
+    if(typeof window.loadSupabase==='function' && !window.loadSupabase.__min312wrapped){
+      const original=window.loadSupabase;
+      const wrapped=async function(...args){
+        const result=await original.apply(this,args);
+        if(result)await syncMinLevels();
+        return result;
+      };
+      wrapped.__min312wrapped=true;
+      window.loadSupabase=wrapped;
+      clearInterval(t);
+    }
+  },150);
+  window.addEventListener('load',()=>setTimeout(syncMinLevels,3000));
+})();
+
 </script>
 
 </body></html>
