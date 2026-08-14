@@ -91,7 +91,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v33.4 kameraram för följesedel -->
+<!-- v33.5 automatisk OCR-rotation 0/90/180/270 -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -2020,26 +2020,46 @@ function parseLelyDeliveryText(text){
   return out;
 }
 
+function rotateOcrCanvas(source,deg){
+  const rad=deg*Math.PI/180;
+  const swap=deg===90||deg===270;
+  const c=document.createElement('canvas');
+  c.width=swap?source.height:source.width;
+  c.height=swap?source.width:source.height;
+  const ctx=c.getContext('2d');
+  ctx.translate(c.width/2,c.height/2);
+  ctx.rotate(rad);
+  ctx.drawImage(source,-source.width/2,-source.height/2);
+  return c;
+}
+
+function scoreLelyOcr(text){
+  const rows=parseLelyDeliveryText(text);
+  let known=0;
+  for(const r of rows) if(findKnownArticle(r.article_no)) known++;
+  return {rows,score:rows.length + known*4,known};
+}
+
 async function readDeliveryPhoto(file){
   if(!file)return;
-  ocrStatus.textContent='Läser följesedeln…';
+  ocrStatus.textContent='Förbereder följesedeln…';
   ocrPreview.innerHTML='';
 
   try{
     if(!window.Tesseract)throw new Error('Textläsningen kunde inte laddas. Kontrollera internetanslutningen.');
-    // Enlarge the photo before OCR. Phone photos of delivery notes often contain
-    // small print; 1.6x gives Tesseract much better article-number recognition.
-    let source=file;
+
+    let source;
     try{
       const bmp=await createImageBitmap(file);
-      const scale=Math.min(2, Math.max(1.35, 2200/Math.max(bmp.width,bmp.height)));
+      const scale=Math.min(2,Math.max(1.30,2200/Math.max(bmp.width,bmp.height)));
       const canvas=document.createElement('canvas');
-      canvas.width=Math.round(bmp.width*scale); canvas.height=Math.round(bmp.height*scale);
+      canvas.width=Math.round(bmp.width*scale);
+      canvas.height=Math.round(bmp.height*scale);
       const ctx=canvas.getContext('2d');
       ctx.drawImage(bmp,0,0,canvas.width,canvas.height);
+
       const img=ctx.getImageData(0,0,canvas.width,canvas.height);
       const d=img.data;
-      // Grayscale + contrast boost for printed delivery notes.
       for(let i=0;i<d.length;i+=4){
         let g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
         g=Math.max(0,Math.min(255,(g-128)*1.45+128));
@@ -2047,23 +2067,58 @@ async function readDeliveryPhoto(file){
       }
       ctx.putImageData(img,0,0);
       source=canvas;
-    }catch(preErr){ console.warn('OCR preprocessing skipped',preErr); }
+    }catch(preErr){
+      console.warn('OCR preprocessing skipped',preErr);
+      const bmp=await createImageBitmap(file);
+      const canvas=document.createElement('canvas');
+      canvas.width=bmp.width; canvas.height=bmp.height;
+      canvas.getContext('2d').drawImage(bmp,0,0);
+      source=canvas;
+    }
 
-    const result=await Tesseract.recognize(source,'eng',{
-      logger:m=>{
-        if(m.status==='recognizing text'){
-          ocrStatus.textContent='Läser följesedeln… '+Math.round((m.progress||0)*100)+' %';
+    const rotations=[0,90,270,180];
+    let best={deg:0,text:'',rows:[],score:-1,known:0};
+
+    for(let ri=0;ri<rotations.length;ri++){
+      const deg=rotations[ri];
+      const rotated=deg===0?source:rotateOcrCanvas(source,deg);
+
+      ocrStatus.textContent='Läser följesedeln… testar '+(ri+1)+' av '+rotations.length+
+        (deg?' ('+deg+'°)':'');
+
+      const result=await Tesseract.recognize(rotated,'eng',{
+        logger:m=>{
+          if(m.status==='recognizing text'){
+            ocrStatus.textContent='Läser följesedeln… '+(ri+1)+'/'+rotations.length+
+              ' • '+Math.round((m.progress||0)*100)+' %';
+          }
         }
-      }
-    });
+      });
 
-    const ocrText=result?.data?.text||'';
-    console.log('Lely OCR text:',ocrText);
-    ocrRows=parseLelyDeliveryText(ocrText);
+      const text=result?.data?.text||'';
+      const scored=scoreLelyOcr(text);
+
+      if(scored.score>best.score){
+        best={deg,text,rows:scored.rows,score:scored.score,known:scored.known};
+      }
+
+      if(scored.rows.length>=20 && scored.known>=Math.max(8,Math.floor(scored.rows.length*0.45))){
+        best={deg,text,rows:scored.rows,score:scored.score,known:scored.known};
+        break;
+      }
+    }
+
+    ocrRows=best.rows;
     renderOcrRows();
-    ocrStatus.textContent=ocrRows.length
-      ? 'Hittade '+ocrRows.length+' artiklar. Kontrollera antal och benämningar innan du sparar.'
-      : 'Kunde inte hitta några artikelrader. Prova ett rakare/närmare foto eller lägg in manuellt.';
+
+    if(ocrRows.length){
+      ocrStatus.textContent=(best.deg
+        ? 'Bilden roterades automatiskt '+best.deg+'°. '
+        : '')+
+        'Hittade '+ocrRows.length+' artiklar. Kontrollera antal och benämningar innan du sparar.';
+    }else{
+      ocrStatus.textContent='Kunde inte hitta några artikelrader trots automatisk rotation. Prova ett rakare/närmare foto eller lägg in manuellt.';
+    }
   }catch(e){
     ocrStatus.textContent=e.message||String(e);
     console.error(e);
