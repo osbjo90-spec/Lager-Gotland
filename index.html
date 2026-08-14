@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v32.3 -->
+<!-- v32.4 -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -1512,7 +1512,9 @@ function renderTodos(){
       </div>
     </div>`:''}
     <div class="row">
-      ${x.status!=='Klar'?`<button onclick="setTodoDone(${JSON.stringify(x.id)})">Markera som klar</button>`:''}
+      ${x.status!=='Klar'
+        ? `<button onclick="setTodoDone(${JSON.stringify(x.id)})">Markera som klar</button>`
+        : `<button onclick="setTodoActive(${JSON.stringify(x.id)})">↩️ Gör aktiv igen</button>`}
       <button onclick="editTodo(${JSON.stringify(x.id)})">Ändra</button>
       <button onclick="deleteTodo(${JSON.stringify(x.id)})">Ta bort</button>
     </div></div>`).join(''):'<div class="card"><b>Inga jobb här.</b></div>';
@@ -1566,6 +1568,21 @@ async function setPartStatus(id,status){
     toastMsg(status==='Beställd'?'Delen markerad beställd':'Delen markerad levererad');
   }catch(e){
     toastMsg('Kunde inte uppdatera beställningsstatus');
+    console.error(e);
+  }
+}
+
+async function setTodoActive(id){
+  try{
+    await sbFetch('todo_jobs?id=eq.'+encodeURIComponent(id),{
+      method:'PATCH',
+      headers:{Prefer:'return=minimal'},
+      body:JSON.stringify({status:'Aktiv'})
+    });
+    await syncTodos();
+    toastMsg('Jobbet är aktivt igen');
+  }catch(e){
+    toastMsg('Kunde inte återaktivera jobbet');
     console.error(e);
   }
 }

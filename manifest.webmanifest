@@ -1,7 +1,7 @@
 {
   "name": "Lager Gotland",
   "short_name": "Lager Gotland",
-  "description": "Lager Gotland – v32.3 med beställningsstatus",
+  "description": "Lager Gotland – v32.4 med återaktivering av klara jobb",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
