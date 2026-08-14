@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v32.7 saldo + uttag stabil -->
+<!-- v32.8 klickfix uttag -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -1488,9 +1488,14 @@ function renderWithdrawSearch(){
     if(unique.length>=30)break;
   }
 
-  withdrawResults.innerHTML=unique.map(x =>
-    `<div class="card" onclick="selectWithdraw(${JSON.stringify(x.id)})"><b>${esc(x.id)}</b><br>${esc(x.name)}</div>`
-  ).join('')||'<div class="card">Ingen artikel hittades.</div>';
+  // Use data-id instead of embedding JSON inside a quoted onclick attribute.
+  // This fixes article cards that looked clickable but did not open.
+  withdrawResults.innerHTML=unique.map(x => {
+    const encoded=encodeURIComponent(String(x.id||''));
+    return `<div class="card" data-id="${encoded}" onclick="selectWithdraw(decodeURIComponent(this.dataset.id))" style="cursor:pointer">
+      <b>${esc(x.id)}</b><br>${esc(x.name)}
+    </div>`;
+  }).join('')||'<div class="card">Ingen artikel hittades.</div>';
 }
 function selectWithdraw(id){
   withdrawCurrent=allData().filter(x=>x.id===id).sort((a,b)=>(b.dbId?1:0)-(a.dbId?1:0))[0];
