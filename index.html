@@ -1913,33 +1913,74 @@ async function saveManualInbound(){
   }
 }
 
+function normalizeLelyArticle(raw){
+  let s=String(raw||'').toUpperCase().trim();
+  s=s.replace(/[，,;:]/g,'.').replace(/\s+/g,'');
+  // Common OCR mistakes in numeric article numbers.
+  s=s.replace(/[OQ]/g,'0').replace(/[IL|]/g,'1');
+  // Keep only characters that can occur in Lely article numbers.
+  s=s.replace(/[^0-9A-Z.]/g,'');
+  return s;
+}
+
+function findKnownArticle(candidate){
+  const norm=normalizeLelyArticle(candidate);
+  const compact=norm.replace(/\./g,'');
+  const pool=[...(externalData||[]),...allData()];
+  return pool.find(x=>{
+    const id=normalizeLelyArticle(x.id);
+    return id===norm || id.replace(/\./g,'')===compact;
+  });
+}
+
 function parseLelyDeliveryText(text){
-  const lines=String(text||'').split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
+  const raw=String(text||'').replace(/\u00a0/g,' ');
+  const lines=raw.split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
   const out=[];
-  const art=/\b([0-9]\.[0-9]{4}\.[0-9]{4}\.[0-9A-Z])\b/i;
 
-  for(const line of lines){
-    const m=line.match(art);
-    if(!m)continue;
+  // Accept normal Lely numbers and OCR variants with missing/spaced dots.
+  // Examples: 5.1002.2558.0, 9.1057.0060.3, 5100225580, 5 1002 2558 0.
+  const patterns=[
+    /\b[0-9OQ][.\s]?[0-9OQIL|]{4}[.\s]?[0-9OQIL|]{4}[.\s]?[0-9A-ZOQIL|]\b/gi,
+    /\b[0-9OQ][0-9OQIL|]{9}\b/gi
+  ];
 
-    const no=m[1].toUpperCase();
-    const after=line.slice(line.indexOf(m[0])+m[0].length).trim();
+  for(let li=0;li<lines.length;li++){
+    const line=lines[li];
+    let hits=[];
+    for(const re of patterns){ re.lastIndex=0; hits.push(...(line.match(re)||[])); }
 
-    let qty=1;
-    const qmatch=line.match(/\b(\d+)\s*(?:EA|ST)\b/i);
-    if(qmatch)qty=Math.max(1,parseInt(qmatch[1],10)||1);
+    for(const hit of hits){
+      let compact=normalizeLelyArticle(hit).replace(/\./g,'');
+      if(compact.length!==10)continue;
+      const no=`${compact[0]}.${compact.slice(1,5)}.${compact.slice(5,9)}.${compact[9]}`;
+      const known=findKnownArticle(no);
 
-    // Prefer known description from Lager Gotland if article already exists.
-    const known=(externalData||[]).find(x=>String(x.id).toLowerCase()===no.toLowerCase())
-      || allData().find(x=>String(x.id).toLowerCase()===no.toLowerCase());
-    let name=known?.name||'';
+      // Reject suspicious OCR matches unless they look exactly like a Lely number
+      // or are already known in Lager Gotland.
+      if(!known && !/^[0-9]\.[0-9]{4}\.[0-9]{4}\.[0-9A-Z]$/.test(no))continue;
 
-    // If unknown, take the OCR text after article number up to first obvious numeric weight/quantity field.
-    if(!name){
-      name=after.replace(/\s+\d+[,.]\d+.*$/,'').trim();
+      // Quantity can appear as "2 ST", "2 EA", "Qty 2" or as a nearby isolated integer.
+      const context=[line,lines[li+1]||'',lines[li-1]||''].join(' ');
+      let qty=1;
+      let qm=context.match(/(?:QTY|QUANTITY|ANTAL)\s*[:xX]?\s*(\d{1,4})\b/i)
+          || context.match(/\b(\d{1,4})\s*(?:ST|PCS?|EA)\b/i);
+      if(qm)qty=Math.max(1,parseInt(qm[1],10)||1);
+
+      let name=known?.name||'';
+      if(!name){
+        const pos=line.toUpperCase().indexOf(hit.toUpperCase());
+        let after=pos>=0?line.slice(pos+hit.length).trim():'';
+        name=after
+          .replace(/\b(?:QTY|QUANTITY|ANTAL)\b.*$/i,'')
+          .replace(/\b\d{1,4}\s*(?:ST|PCS?|EA)\b.*$/i,'')
+          .replace(/\s+\d+[,.]\d+.*$/,'').trim();
+      }
+
+      const existing=out.find(x=>x.article_no===no);
+      if(existing){ existing.qty=Math.max(existing.qty,qty); if(!existing.part_name&&name)existing.part_name=name; }
+      else out.push({article_no:no,part_name:name,qty});
     }
-
-    if(!out.some(x=>x.article_no===no))out.push({article_no:no,part_name:name,qty});
   }
   return out;
 }
@@ -1951,7 +1992,29 @@ async function readDeliveryPhoto(file){
 
   try{
     if(!window.Tesseract)throw new Error('Textläsningen kunde inte laddas. Kontrollera internetanslutningen.');
-    const result=await Tesseract.recognize(file,'eng',{
+    // Enlarge the photo before OCR. Phone photos of delivery notes often contain
+    // small print; 1.6x gives Tesseract much better article-number recognition.
+    let source=file;
+    try{
+      const bmp=await createImageBitmap(file);
+      const scale=Math.min(2, Math.max(1.35, 2200/Math.max(bmp.width,bmp.height)));
+      const canvas=document.createElement('canvas');
+      canvas.width=Math.round(bmp.width*scale); canvas.height=Math.round(bmp.height*scale);
+      const ctx=canvas.getContext('2d');
+      ctx.drawImage(bmp,0,0,canvas.width,canvas.height);
+      const img=ctx.getImageData(0,0,canvas.width,canvas.height);
+      const d=img.data;
+      // Grayscale + contrast boost for printed delivery notes.
+      for(let i=0;i<d.length;i+=4){
+        let g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+        g=Math.max(0,Math.min(255,(g-128)*1.45+128));
+        d[i]=d[i+1]=d[i+2]=g;
+      }
+      ctx.putImageData(img,0,0);
+      source=canvas;
+    }catch(preErr){ console.warn('OCR preprocessing skipped',preErr); }
+
+    const result=await Tesseract.recognize(source,'eng',{
       logger:m=>{
         if(m.status==='recognizing text'){
           ocrStatus.textContent='Läser följesedeln… '+Math.round((m.progress||0)*100)+' %';
@@ -1959,7 +2022,9 @@ async function readDeliveryPhoto(file){
       }
     });
 
-    ocrRows=parseLelyDeliveryText(result?.data?.text||'');
+    const ocrText=result?.data?.text||'';
+    console.log('Lely OCR text:',ocrText);
+    ocrRows=parseLelyDeliveryText(ocrText);
     renderOcrRows();
     ocrStatus.textContent=ocrRows.length
       ? 'Hittade '+ocrRows.length+' artiklar. Kontrollera antal och benämningar innan du sparar.'
