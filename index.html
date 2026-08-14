@@ -91,7 +91,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v33.6 filter mot falska OCR-rader -->
+<!-- v33.7 OCR fix: scoring + rotation helpers -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -2008,6 +2008,41 @@ function parseLelyDeliveryText(text){
     }
   }
   return out;
+}
+
+function rotateOcrCanvas(source,deg){
+  const d=((Number(deg)||0)%360+360)%360;
+  if(d===0)return source;
+  const c=document.createElement('canvas');
+  const swap=d===90||d===270;
+  c.width=swap?source.height:source.width;
+  c.height=swap?source.width:source.height;
+  const ctx=c.getContext('2d');
+  ctx.translate(c.width/2,c.height/2);
+  ctx.rotate(d*Math.PI/180);
+  ctx.drawImage(source,-source.width/2,-source.height/2);
+  return c;
+}
+
+function scoreLelyOcr(text){
+  const rows=parseLelyDeliveryText(text);
+  let known=0;
+  for(const row of rows){
+    if(findKnownArticle(row.article_no))known++;
+  }
+
+  // Prefer the orientation that yields many valid Lely article rows,
+  // especially rows that match the existing Lager Gotland article register.
+  // Known matches are weighted heavily to avoid order/line numbers winning.
+  let score=(rows.length*10)+(known*30);
+
+  const t=String(text||'');
+  if(/DELIVERY\s*NOTE/i.test(t))score+=8;
+  if(/\bITEM\b/i.test(t))score+=4;
+  if(/\bQUANTITY\b/i.test(t))score+=4;
+  if(/LELY/i.test(t))score+=3;
+
+  return {rows,known,score};
 }
 
 async function readDeliveryPhoto(file){
