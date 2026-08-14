@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v32.9 canonical data + saldo -->
+<!-- v33.1 inleverans på stabil v32.9 -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -118,8 +118,47 @@ nav{z-index:30}
 </div>
 <div class="card">
 <button class="primary" style="width:100%" onclick="openRefill()">📦 Påfyllningslista</button><button onclick="openTodos()">📝<span>ToDo <b id="todoNavBadge"></b></span></button>
+<button class="green" style="width:100%;margin-top:8px" onclick="openInbound()">📥 Inleverans / Ofördelat <b id="inboundBadge"></b></button>
 </div>
 </section>
+
+<section id="inbound" class="screen">
+<div class="card">
+  <div class="row between"><b>📥 Inleverans / Ofördelat</b><button onclick="show('home')">Tillbaka</button></div>
+  <p class="muted">Fota eller välj en Lely-följesedel. Appen försöker läsa artikelnummer och antal. Kontrollera alltid listan innan du sparar.</p>
+  <input id="deliveryPhoto" type="file" accept="image/*" capture="environment" style="display:none" onchange="readDeliveryPhoto(this.files && this.files[0])">
+  <div class="row">
+    <button class="primary" style="flex:1" onclick="deliveryPhoto.click()">📷 Fota / välj följesedel</button>
+    <button style="flex:1" onclick="openManualInbound()">+ Lägg till manuellt</button>
+  </div>
+  <p id="ocrStatus" class="muted" style="margin-bottom:0"></p>
+</div>
+<div id="ocrPreview"></div>
+<div id="inboundList"></div>
+</section>
+
+<div id="inboundModal" style="display:none;position:fixed;inset:0;background:#0009;z-index:120;padding:16px;overflow:auto">
+<div style="max-width:540px;margin:3vh auto;background:#fff;border-radius:16px;padding:16px">
+  <div class="row between"><b>Fördela del</b><button onclick="closeInboundModal()">✕</button></div>
+  <p id="inboundPartTitle"></p>
+  <label class="muted">Till</label>
+  <select id="inboundTarget">
+    <option value="jimmy">Jimmys bil</option><option value="oskar">Oskars bil</option>
+    <option value="jonathan">Jonathans bil</option><option value="lager">Lagret</option><option value="kemi">Kemi/Övrigt</option>
+  </select>
+  <label class="muted" style="display:block;margin-top:10px">Antal</label><input id="inboundQty" type="number" min="1" value="1">
+  <label class="muted" style="display:block;margin-top:10px">Hyllplats (valfritt)</label><input id="inboundShelf" placeholder="T.ex. H12 eller M5">
+  <button class="green" style="width:100%;margin-top:14px" onclick="distributeInbound()">Fördela</button>
+</div></div>
+
+<div id="manualInboundModal" style="display:none;position:fixed;inset:0;background:#0009;z-index:120;padding:16px;overflow:auto">
+<div style="max-width:540px;margin:3vh auto;background:#fff;border-radius:16px;padding:16px">
+  <div class="row between"><b>Lägg i Ofördelat</b><button onclick="manualInboundModal.style.display='none'">✕</button></div>
+  <label class="muted">Artikelnummer</label><input id="miArticle">
+  <label class="muted">Benämning</label><input id="miName">
+  <label class="muted">Antal</label><input id="miQty" type="number" min="1" value="1">
+  <button class="green" style="width:100%;margin-top:14px" onclick="saveManualInbound()">Spara</button>
+</div></div>
 
 <section id="todo" class="screen">
 <div class="card">
@@ -1740,4 +1779,230 @@ async function setTodoActive(id){
 }
 </script>
 
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js">
+// ===== v33.1 Inleverans / Ofördelat ovanpå stabil v32.9 =====
+let inboundRows=[], inboundCurrent=null, ocrRows=[];
+
+function openInbound(){ show('inbound'); syncInbound(); }
+function openManualInbound(){ manualInboundModal.style.display='block'; }
+function closeInboundModal(){ inboundModal.style.display='none'; inboundCurrent=null; }
+
+async function syncInbound(){
+  try{
+    if(!sbConnected){
+      inboundList.innerHTML='<div class="card">Anslut Supabase först.</div>';
+      return;
+    }
+    inboundRows=await sbAll('inleverans','*');
+    inboundRows.sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));
+    renderInbound();
+  }catch(e){
+    inboundList.innerHTML='<div class="card"><b>Inleverans-tabellen saknas.</b><p class="muted">Kör SQL-koden för v33.1 en gång i Supabase.</p></div>';
+    console.error(e);
+  }
+}
+
+function renderInbound(){
+  const active=inboundRows.filter(x=>(parseInt(x.remaining_qty,10)||0)>0);
+  const badge=document.getElementById('inboundBadge');
+  if(badge) badge.textContent=active.length?'('+active.length+')':'';
+
+  inboundList.innerHTML=active.length ? active.map(x=>`<div class="card">
+    <div class="row between"><b>${esc(x.article_no)}</b><b>${parseInt(x.remaining_qty,10)||0} st kvar</b></div>
+    <p style="margin:6px 0">${esc(x.part_name||'')}</p>
+    <p class="muted" style="margin:6px 0">Inlevererat ${parseInt(x.received_qty,10)||0} st${x.delivery_note?' • Följesedel '+esc(x.delivery_note):''}</p>
+    <button class="green" onclick="openInboundDistribution(${JSON.stringify(x.id)})">Fördela</button>
+  </div>`).join('') : '<div class="card"><b>✓ Inget ofördelat just nu</b></div>';
+}
+
+function openInboundDistribution(id){
+  inboundCurrent=inboundRows.find(x=>String(x.id)===String(id));
+  if(!inboundCurrent)return;
+  inboundPartTitle.textContent=inboundCurrent.article_no+' – '+(inboundCurrent.part_name||'')+' • '+inboundCurrent.remaining_qty+' st kvar';
+  inboundQty.max=inboundCurrent.remaining_qty;
+  inboundQty.value=1;
+  inboundShelf.value='';
+  inboundModal.style.display='block';
+}
+
+async function ensureArticleForInbound(articleNo,name){
+  let a=(externalData||[]).find(x=>String(x.id).trim().toLowerCase()===String(articleNo).trim().toLowerCase())
+      || allData().find(x=>String(x.id).trim().toLowerCase()===String(articleNo).trim().toLowerCase());
+  if(a && a.dbId)return a;
+
+  const created=await sbFetch('artiklar',{
+    method:'POST',
+    headers:{Prefer:'return=representation'},
+    body:JSON.stringify({artikelnummer:String(articleNo).trim(),benamning:String(name||articleNo).trim()})
+  });
+  const dbId=created?.[0]?.id;
+  if(!dbId)throw new Error('Kunde inte skapa artikel');
+
+  // Reload through the proven v32.9 Supabase path, then resolve canonical article.
+  await loadSupabase(false);
+  a=(externalData||[]).find(x=>String(x.id).trim().toLowerCase()===String(articleNo).trim().toLowerCase());
+  if(!a)throw new Error('Artikeln kunde inte läsas tillbaka');
+  return a;
+}
+
+async function distributeInbound(){
+  if(!inboundCurrent)return;
+  const n=Math.max(1,parseInt(inboundQty.value,10)||1);
+  const rem=Math.max(0,parseInt(inboundCurrent.remaining_qty,10)||0);
+  if(n>rem){ toastMsg('Det finns bara '+rem+' st kvar'); return; }
+
+  try{
+    const a=await ensureArticleForInbound(inboundCurrent.article_no,inboundCurrent.part_name);
+    const target=inboundTarget.value;
+    const l=a.locations?.[target]||{qty:'0',place:''};
+    const old=Math.max(0,parseInt(l.qty,10)||0);
+    const shelf=(inboundShelf.value||l.place||'').trim();
+
+    // Reuse the stable verified stock writer from v32.9.
+    await setStockV29(a,target,old+n,shelf);
+
+    await sbFetch('inleverans?id=eq.'+encodeURIComponent(inboundCurrent.id),{
+      method:'PATCH',
+      headers:{Prefer:'return=minimal'},
+      body:JSON.stringify({remaining_qty:rem-n})
+    });
+
+    await loadSupabase(false);
+    closeInboundModal();
+    await syncInbound();
+    renderHome();
+    toastMsg('Fördela '+n+' st till '+names[target]);
+  }catch(e){
+    toastMsg('Kunde inte fördela delen: '+(e?.message||e));
+    console.error(e);
+  }
+}
+
+async function saveInboundRow(articleNo,name,qty,deliveryNote=''){
+  qty=Math.max(1,parseInt(qty,10)||1);
+  await sbFetch('inleverans',{
+    method:'POST',
+    headers:{Prefer:'return=minimal'},
+    body:JSON.stringify({
+      article_no:String(articleNo||'').trim(),
+      part_name:String(name||'').trim(),
+      received_qty:qty,
+      remaining_qty:qty,
+      delivery_note:String(deliveryNote||'').trim()
+    })
+  });
+}
+
+async function saveManualInbound(){
+  const no=miArticle.value.trim();
+  const nm=miName.value.trim();
+  const q=Math.max(1,parseInt(miQty.value,10)||1);
+  if(!no){toastMsg('Ange artikelnummer');return;}
+  try{
+    await saveInboundRow(no,nm,q);
+    manualInboundModal.style.display='none';
+    miArticle.value='';miName.value='';miQty.value=1;
+    await syncInbound();
+    toastMsg('Lagd i Ofördelat');
+  }catch(e){
+    toastMsg('Kunde inte spara');
+    console.error(e);
+  }
+}
+
+function parseLelyDeliveryText(text){
+  const lines=String(text||'').split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
+  const out=[];
+  const art=/\b([0-9]\.[0-9]{4}\.[0-9]{4}\.[0-9A-Z])\b/i;
+
+  for(const line of lines){
+    const m=line.match(art);
+    if(!m)continue;
+
+    const no=m[1].toUpperCase();
+    const after=line.slice(line.indexOf(m[0])+m[0].length).trim();
+
+    let qty=1;
+    const qmatch=line.match(/\b(\d+)\s*(?:EA|ST)\b/i);
+    if(qmatch)qty=Math.max(1,parseInt(qmatch[1],10)||1);
+
+    // Prefer known description from Lager Gotland if article already exists.
+    const known=(externalData||[]).find(x=>String(x.id).toLowerCase()===no.toLowerCase())
+      || allData().find(x=>String(x.id).toLowerCase()===no.toLowerCase());
+    let name=known?.name||'';
+
+    // If unknown, take the OCR text after article number up to first obvious numeric weight/quantity field.
+    if(!name){
+      name=after.replace(/\s+\d+[,.]\d+.*$/,'').trim();
+    }
+
+    if(!out.some(x=>x.article_no===no))out.push({article_no:no,part_name:name,qty});
+  }
+  return out;
+}
+
+async function readDeliveryPhoto(file){
+  if(!file)return;
+  ocrStatus.textContent='Läser följesedeln…';
+  ocrPreview.innerHTML='';
+
+  try{
+    if(!window.Tesseract)throw new Error('Textläsningen kunde inte laddas. Kontrollera internetanslutningen.');
+    const result=await Tesseract.recognize(file,'eng',{
+      logger:m=>{
+        if(m.status==='recognizing text'){
+          ocrStatus.textContent='Läser följesedeln… '+Math.round((m.progress||0)*100)+' %';
+        }
+      }
+    });
+
+    ocrRows=parseLelyDeliveryText(result?.data?.text||'');
+    renderOcrRows();
+    ocrStatus.textContent=ocrRows.length
+      ? 'Hittade '+ocrRows.length+' artiklar. Kontrollera antal och benämningar innan du sparar.'
+      : 'Kunde inte hitta några artikelrader. Prova ett rakare/närmare foto eller lägg in manuellt.';
+  }catch(e){
+    ocrStatus.textContent=e.message||String(e);
+    console.error(e);
+  }
+}
+
+function renderOcrRows(){
+  ocrPreview.innerHTML=ocrRows.length?`<div class="card">
+    <div class="row between"><b>Kontrollera inleveransen</b><button class="green" onclick="saveOcrInbound()">Spara alla i Ofördelat</button></div>
+    ${ocrRows.map((x,i)=>`<div class="item">
+      <b>${esc(x.article_no)}</b>
+      <input id="ocrName${i}" value="${esc(x.part_name)}" placeholder="Benämning" style="margin-top:6px">
+      <div class="row" style="margin-top:6px">
+        <span class="muted">Antal</span>
+        <input id="ocrQty${i}" type="number" min="1" value="${x.qty}" style="max-width:100px">
+      </div>
+    </div>`).join('')}
+  </div>`:'';
+}
+
+async function saveOcrInbound(){
+  if(!ocrRows.length)return;
+  try{
+    ocrStatus.textContent='Sparar inleveransen…';
+    for(let i=0;i<ocrRows.length;i++){
+      const x=ocrRows[i];
+      const nm=document.getElementById('ocrName'+i)?.value||x.part_name;
+      const q=document.getElementById('ocrQty'+i)?.value||x.qty;
+      await saveInboundRow(x.article_no,nm,q,'');
+    }
+    ocrRows=[];
+    ocrPreview.innerHTML='';
+    deliveryPhoto.value='';
+    await syncInbound();
+    ocrStatus.textContent='Klart – delarna ligger i Ofördelat.';
+    toastMsg('Inleveransen sparad');
+  }catch(e){
+    ocrStatus.textContent='Kunde inte spara inleveransen.';
+    console.error(e);
+  }
+}
+
+window.addEventListener('load',()=>setTimeout(()=>{if(sbConnected)syncInbound()},4200));
+</script>
 </body></html>
