@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v32.8 klickfix uttag -->
+<!-- v32.9 canonical data + saldo -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -812,11 +812,34 @@ async function loadSupabase(manual=false){
       lager:{qty:String(locs?.lager?.qty??""),place:String(locs?.lager?.place??"")},
       kemi:{qty:String(locs?.kemi?.qty??""),place:String(locs?.kemi?.place??"")}
     });
-    const data=INVENTORY_DATA.map(b=>({
-      id:String(b.id??""),name:String(b.name??""),dbId:null,
-      locations:cloneLocations(b.locations),_stockIds:{}
-    }));
-    const byArticleNo=new Map(data.map(x=>[x.id.trim().toLowerCase(),x]));
+    // v32.9: bygg EN lokal post per artikelnummer redan här.
+    // Detta lämnar Supabase-kopplingen orörd men tar bort dubbletter från grundfilen.
+    const data=[];
+    const byArticleNo=new Map();
+    for(const b of INVENTORY_DATA){
+      const id=String(b.id??"").trim();
+      const k=id.toLowerCase();
+      if(!k)continue;
+      const candidate={
+        id:id,name:String(b.name??""),dbId:null,
+        locations:cloneLocations(b.locations),_stockIds:{}
+      };
+      const prev=byArticleNo.get(k);
+      if(!prev){
+        data.push(candidate);
+        byArticleNo.set(k,candidate);
+      }else{
+        // Behåll befintlig post men fyll eventuella tomma platsuppgifter från dubbletten.
+        for(const loc of ["jimmy","oskar","jonathan","lager","kemi"]){
+          const a=prev.locations[loc]||{qty:"",place:""};
+          const c=candidate.locations[loc]||{qty:"",place:""};
+          if((a.qty===""||a.qty==null) && c.qty!=="" && c.qty!=null)a.qty=c.qty;
+          if(!a.place && c.place)a.place=c.place;
+          prev.locations[loc]=a;
+        }
+        if(!prev.name && candidate.name)prev.name=candidate.name;
+      }
+    }
     const byDbId=new Map();
 
     articles.forEach(a=>{
@@ -836,7 +859,18 @@ async function loadSupabase(manual=false){
 
     const placeById={};places.forEach(p=>placeById[p.id]=placeKeyFromName(p.namn));
     const syncedInv={};
-    stocks.forEach(s=>{
+
+    // v32.9: om databasen råkar innehålla flera saldorader för samma artikel/plats
+    // används raden med högst id (senast skapad) konsekvent.
+    const stockMap=new Map();
+    for(const s of stocks){
+      const k=String(s.artikel_id)+"|"+String(s.plats_id);
+      const prev=stockMap.get(k);
+      if(!prev || Number(s.id)>Number(prev.id)) stockMap.set(k,s);
+    }
+    const canonicalStocks=[...stockMap.values()];
+
+    canonicalStocks.forEach(s=>{
       const x=byDbId.get(s.artikel_id),p=placeById[s.plats_id];
       if(!x||!p)return;
       const incomingQty=s.antal==null?"":String(s.antal);
@@ -865,7 +899,7 @@ async function loadSupabase(manual=false){
     try{localStorage.setItem("imported_inventory_v1",JSON.stringify(externalData))}catch(e){}
     cloudBadge.textContent="Supabase";cloudBadge.className="cloudok";
     if(typeof fileStatus!=="undefined")fileStatus.textContent="Supabase synkad • "+data.length+" artiklar • "+new Date().toLocaleTimeString("sv-SE",{hour:"2-digit",minute:"2-digit"});
-    if(typeof spStatus!=="undefined")spStatus.textContent="Synkad • "+data.length+" artiklar • "+stocks.length+" lagersaldon";
+    if(typeof spStatus!=="undefined")spStatus.textContent="Synkad • "+data.length+" artiklar • "+canonicalStocks.length+" lagersaldon";
     renderHome();renderSearch();renderLeft();
     if(current){
       const refreshed=allData().find(x=>x.id===current.id);
@@ -1498,7 +1532,8 @@ function renderWithdrawSearch(){
   }).join('')||'<div class="card">Ingen artikel hittades.</div>';
 }
 function selectWithdraw(id){
-  withdrawCurrent=allData().filter(x=>x.id===id).sort((a,b)=>(b.dbId?1:0)-(a.dbId?1:0))[0];
+  withdrawCurrent=(externalData||[]).find(x=>String(x.id)===String(id))
+    || allData().find(x=>String(x.id)===String(id));
   if(!withdrawCurrent)return;
   withdrawResults.innerHTML='';
   const ps=['jimmy','oskar','jonathan','lager','kemi'];
@@ -1535,7 +1570,7 @@ async function doWithdraw(n){
     await loadSupabase(false);
 
     // Re-resolve the article after sync so the UI shows the actual database value.
-    withdrawCurrent=allData().filter(x=>x.id===articleId).sort((a,b)=>(b.dbId?1:0)-(a.dbId?1:0))[0];
+    withdrawCurrent=(externalData||[]).find(x=>String(x.id)===String(articleId)) || allData().find(x=>String(x.id)===String(articleId));
     if(!withdrawCurrent)throw new Error("Artikeln kunde inte läsas tillbaka");
 
     const saved=Math.max(0,parseInt(withdrawCurrent.locations?.[p]?.qty,10)||0);
