@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v33.2 klickfix inleverans -->
+<!-- v33.3 tydliga Supabase-fel för inleverans -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -1906,8 +1906,10 @@ async function saveManualInbound(){
     await syncInbound();
     toastMsg('Lagd i Ofördelat');
   }catch(e){
-    toastMsg('Kunde inte spara');
-    console.error(e);
+    const detail = e?.message || e?.error_description || e?.details || String(e);
+    toastMsg('Kunde inte spara: ' + detail);
+    alert('Inleverans kunde inte sparas.\n\nSupabase-fel:\n' + detail);
+    console.error('Inleverans save error:', e);
   }
 }
 
@@ -1999,8 +2001,10 @@ async function saveOcrInbound(){
     ocrStatus.textContent='Klart – delarna ligger i Ofördelat.';
     toastMsg('Inleveransen sparad');
   }catch(e){
-    ocrStatus.textContent='Kunde inte spara inleveransen.';
-    console.error(e);
+    const detail = e?.message || e?.error_description || e?.details || String(e);
+    ocrStatus.textContent='Kunde inte spara inleveransen: ' + detail;
+    alert('Inleverans kunde inte sparas.\n\nSupabase-fel:\n' + detail);
+    console.error('OCR inbound save error:', e);
   }
 }
 
