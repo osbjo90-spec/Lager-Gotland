@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v32.4 -->
+<!-- v32.5 stabilitetsfix -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -1191,13 +1191,45 @@ function startNewPartScanner(){
   startScanner();
 }
 
-async function setStockV29(item,p,qty,place){
+async function setStockV29(article, locKey, qty, place){
+  if(!sbConnected) throw new Error("Supabase är inte anslutet");
+  if(!article || !article.dbId) throw new Error("Artikeln saknar Supabase-id");
   qty=Math.max(0,parseInt(qty,10)||0);
-  place=String(place||'').trim();
-  item.locations[p]={qty:String(qty),place:place};
-  inv[p+'|'+item.id]={done:true,qty:qty,note:(inv[p+'|'+item.id]?.note||'')};
-  localStorage.setItem('inventory_v2',JSON.stringify(inv));
-  if(sbConnected && sbPlaceIds[p]) await saveStockToSupabase(item,p,qty,place);
+  place=String(place??"").trim();
+
+  // Always resolve the current stock row from Supabase instead of trusting a stale local _stockIds value.
+  const rows=await sbAll("lager_saldo","id,artikel_id,lagerstalle,antal,plats");
+  const current=rows.find(r=>String(r.artikel_id)===String(article.dbId) && String(r.lagerstalle)===String(locKey));
+
+  if(current?.id){
+    await sbFetch("lager_saldo?id=eq."+encodeURIComponent(current.id),{
+      method:"PATCH",
+      headers:{Prefer:"return=representation"},
+      body:JSON.stringify({antal:qty,plats:place})
+    });
+    article._stockIds=article._stockIds||{};
+    article._stockIds[locKey]=current.id;
+  }else{
+    const created=await sbFetch("lager_saldo",{
+      method:"POST",
+      headers:{Prefer:"return=representation"},
+      body:JSON.stringify({artikel_id:article.dbId,lagerstalle:locKey,antal:qty,plats:place})
+    });
+    if(!created?.[0]?.id) throw new Error("Supabase skapade ingen saldorad");
+    article._stockIds=article._stockIds||{};
+    article._stockIds[locKey]=created[0].id;
+  }
+
+  // Read back the value from Supabase. Do not show "saved" until the database confirms it.
+  const verify=await sbAll("lager_saldo","id,artikel_id,lagerstalle,antal,plats");
+  const saved=verify.find(r=>String(r.artikel_id)===String(article.dbId) && String(r.lagerstalle)===String(locKey));
+  if(!saved || Number(saved.antal)!==qty) throw new Error("Saldot kunde inte verifieras efter sparning");
+
+  article.locations=article.locations||{};
+  article.locations[locKey]={qty:String(saved.antal),place:saved.plats||""};
+  article._stockIds=article._stockIds||{};
+  article._stockIds[locKey]=saved.id;
+  return saved;
 }
 async function quickStock(delta){
   if(!current)return;
