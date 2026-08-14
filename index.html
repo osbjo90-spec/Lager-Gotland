@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v32.6 dedupe + stabilitetsfix -->
+<!-- v32.5 stabilitetsfix -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -337,41 +337,12 @@ let msalApp=null, msalAccount=null, spSiteId=null;
 const GRAPH_SCOPES=["Sites.ReadWrite.All"];
 
 function allData(){
-  const merged=[...(data||[]),...(externalData||[])];
-  const byArticle=new Map();
-
-  for(const item of merged){
-    if(!item) continue;
-    const key=String(item.id||'').trim().toLowerCase();
-    if(!key) continue;
-
-    const prev=byArticle.get(key);
-    if(!prev){
-      byArticle.set(key,item);
-      continue;
-    }
-
-    // Prefer the copy that is connected to Supabase.
-    let keep=(item.dbId && !prev.dbId) ? item : prev;
-    let other=keep===item ? prev : item;
-
-    keep.locations=keep.locations||{};
-    other.locations=other.locations||{};
-    for(const loc of Object.keys(other.locations)){
-      const a=keep.locations[loc]||{};
-      const b=other.locations[loc]||{};
-      // Keep the location with meaningful stock/place information.
-      if((a.qty===''||a.qty==null) && b.qty!=='' && b.qty!=null) a.qty=b.qty;
-      if(!a.place && b.place) a.place=b.place;
-      keep.locations[loc]=a;
-    }
-
-    keep._stockIds={...(other._stockIds||{}),...(keep._stockIds||{})};
-    if(!keep.dbId && other.dbId) keep.dbId=other.dbId;
-    if(!keep.name && other.name) keep.name=other.name;
-    byArticle.set(key,keep);
-  }
-  return [...byArticle.values()];
+  let a=(externalData||INVENTORY_DATA).concat(customParts);
+  a.forEach(x=>{
+    x.locations=x.locations||{};
+    if(!x.locations.kemi)x.locations.kemi={qty:"",place:""};
+  });
+  return a
 }
 function rel(p=selected){return allData().filter(x=>{let a=x.locations[p];return a && (a.qty!==""||a.place!=="")})}
 function key(x){return selected+"|"+x.id}
