@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v33.1 inleverans på stabil v32.9 -->
+<!-- v33.2 klickfix inleverans -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -1779,7 +1779,8 @@ async function setTodoActive(id){
 }
 </script>
 
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js">
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script>
 // ===== v33.1 Inleverans / Ofördelat ovanpå stabil v32.9 =====
 let inboundRows=[], inboundCurrent=null, ocrRows=[];
 
