@@ -117,8 +117,7 @@ nav{z-index:30}
   </div>
 </div>
 <div class="card">
-<button class="primary" style="width:100%" onclick="openRefill()">📦 Påfyllningslista</button><button onclick="openTodos()">📝<span>ToDo <b id="todoNavBadge"></b></span></button>
-<button class="green" style="width:100%;margin-top:8px" onclick="openInbound()">📥 Inleverans / Ofördelat <b id="inboundBadge"></b></button>
+<button class="primary" style="width:100%" onclick="openRefill()">📦 Påfyllningslista</button><button onclick="openTodos()">📝<span>ToDo</span></button>
 </div>
 </section>
 
@@ -351,11 +350,12 @@ nav{z-index:30}
   </div>
 </div>
 
-<nav style="grid-template-columns:repeat(5,1fr)">
+<nav style="grid-template-columns:repeat(6,1fr)">
 <button id="n-home" class="activeNav" onclick="show('home')"><span class="ni">⌂</span><span>Översikt</span></button>
 <button id="n-search" onclick="show('search')"><span class="ni">⌕</span><span>Sök</span></button>
 <button id="n-withdraw" onclick="openWithdraw()"><span class="ni">📤</span><span>Uttag</span></button>
 <button id="n-refill" onclick="openRefill()"><span class="ni">📦</span><span id="refillNavText">Påfyllning</span></button>
+<button id="n-inbound" onclick="openInbound()"><span class="ni">📥</span><span>Inleverans <b id="inboundBadge"></b></span></button>
 <button id="n-todo" onclick="openTodos()"><span class="ni">📝</span><span>ToDo <b id="todoNavBadge"></b></span></button>
 </nav>
 <div class="toast" id="toast"></div>
