@@ -85,7 +85,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v32.5 stabilitetsfix -->
+<!-- v32.7 saldo + uttag stabil -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -906,21 +906,40 @@ async function save(){
 }
 async function saveAllStocks(){
   if(!current)return;
-  let locs=["jimmy","oskar","jonathan","lager","kemi"];
+  const locs=["jimmy","oskar","jonathan","lager","kemi"];
   try{
     for(const p of locs){
-      let qel=document.getElementById("stockqty_"+p),pel=document.getElementById("stockplace_"+p);
+      const qel=document.getElementById("stockqty_"+p);
+      const pel=document.getElementById("stockplace_"+p);
       if(!qel||!pel)continue;
-      let qty=Math.max(0,parseInt(qel.value)||0),place=(pel.value||"").trim();
-      const before=current.locations[p]||{qty:"",place:""};
+
+      const qty=Math.max(0,parseInt(qel.value,10)||0);
+      const place=(pel.value||"").trim();
+      const before=current.locations?.[p]||{qty:"",place:""};
       const hadLocation=(String(before.qty??"")!=="" || String(before.place??"").trim()!=="" || !!current._stockIds?.[p]);
-      // v18: skapa inte nya tomma 0-saldon på alla andra platser när man sparar alla.
+
+      // Don't create empty zero rows for completely unused locations.
       if(!hadLocation && qty===0 && !place)continue;
-      current.locations[p]={qty:String(qty),place};inv[p+"|"+current.id]={done:true,qty,note:(inv[p+"|"+current.id]?.note||"")};
-      if(sbConnected&&sbPlaceIds[p])await saveStockToSupabase(current,p,qty,place);
+
+      await setStockV29(current,p,qty,place);
+      inv[p+"|"+current.id]={done:true,qty,note:(inv[p+"|"+current.id]?.note||"")};
     }
-    localStorage.setItem("inventory_v2",JSON.stringify(inv));detailStocks.innerHTML=stockHTML(current,false);renderAllStockEditors();renderHome();toastMsg(sbConnected?"Alla saldon sparade i Supabase":"Alla saldon sparade lokalt");
-  }catch(e){toastMsg("Kunde inte spara alla saldon");console.error(e)}
+
+    localStorage.setItem("inventory_v2",JSON.stringify(inv));
+    await loadSupabase(false);
+
+    const refreshed=allData().find(x=>x.id===current.id);
+    if(refreshed) current=refreshed;
+
+    detailStocks.innerHTML=stockHTML(current,false);
+    renderAllStockEditors();
+    renderHome();
+    renderSearch();
+    toastMsg("Alla saldon sparade och verifierade");
+  }catch(e){
+    toastMsg("Kunde inte spara alla saldon: "+(e?.message||e));
+    console.error(e);
+  }
 }
 async function addNewPart(){
   let target=(newPartLocation.value||selected),id=(newId.value||"").trim(),nm=(newName.value||"").trim(),pl=(newPlace.value||"").trim(),qty=Math.max(0,parseInt(newQty.value)||0);
@@ -1193,55 +1212,87 @@ function startNewPartScanner(){
 
 async function setStockV29(article, locKey, qty, place){
   if(!sbConnected) throw new Error("Supabase är inte anslutet");
-  if(!article || !article.dbId) throw new Error("Artikeln saknar Supabase-id");
+  if(!article?.dbId) throw new Error("Artikeln saknar Supabase-id");
+  if(!sbPlaceIds?.[locKey]) throw new Error("Lagerstället saknar Supabase-id");
+
   qty=Math.max(0,parseInt(qty,10)||0);
-  place=String(place??"").trim();
+  place=String(place||"").trim();
 
-  // Always resolve the current stock row from Supabase instead of trusting a stale local _stockIds value.
-  const rows=await sbAll("lager_saldo","id,artikel_id,lagerstalle,antal,plats");
-  const current=rows.find(r=>String(r.artikel_id)===String(article.dbId) && String(r.lagerstalle)===String(locKey));
+  article._stockIds=article._stockIds||{};
+  const body={
+    artikel_id:article.dbId,
+    plats_id:sbPlaceIds[locKey],
+    antal:qty,
+    hyllplats:place||null
+  };
 
-  if(current?.id){
-    await sbFetch("lager_saldo?id=eq."+encodeURIComponent(current.id),{
+  // Resolve the real row from Supabase first. This avoids stale local row IDs.
+  const rows=await sbAll("lagersaldo","id,artikel_id,plats_id,antal,hyllplats");
+  let row=rows.find(r =>
+    String(r.artikel_id)===String(article.dbId) &&
+    String(r.plats_id)===String(sbPlaceIds[locKey])
+  );
+
+  if(row?.id){
+    const updated=await sbFetch("lagersaldo?id=eq."+encodeURIComponent(row.id),{
       method:"PATCH",
       headers:{Prefer:"return=representation"},
-      body:JSON.stringify({antal:qty,plats:place})
+      body:JSON.stringify(body)
     });
-    article._stockIds=article._stockIds||{};
-    article._stockIds[locKey]=current.id;
+    if(updated?.[0]) row=updated[0];
   }else{
-    const created=await sbFetch("lager_saldo",{
+    const created=await sbFetch("lagersaldo",{
       method:"POST",
       headers:{Prefer:"return=representation"},
-      body:JSON.stringify({artikel_id:article.dbId,lagerstalle:locKey,antal:qty,plats:place})
+      body:JSON.stringify(body)
     });
-    if(!created?.[0]?.id) throw new Error("Supabase skapade ingen saldorad");
-    article._stockIds=article._stockIds||{};
-    article._stockIds[locKey]=created[0].id;
+    if(!created?.[0]) throw new Error("Ingen saldorad skapades");
+    row=created[0];
   }
 
-  // Read back the value from Supabase. Do not show "saved" until the database confirms it.
-  const verify=await sbAll("lager_saldo","id,artikel_id,lagerstalle,antal,plats");
-  const saved=verify.find(r=>String(r.artikel_id)===String(article.dbId) && String(r.lagerstalle)===String(locKey));
-  if(!saved || Number(saved.antal)!==qty) throw new Error("Saldot kunde inte verifieras efter sparning");
+  // Verify the database value before updating the UI.
+  const verify=await sbAll("lagersaldo","id,artikel_id,plats_id,antal,hyllplats");
+  const saved=verify.find(r =>
+    String(r.artikel_id)===String(article.dbId) &&
+    String(r.plats_id)===String(sbPlaceIds[locKey])
+  );
+  if(!saved || Number(saved.antal)!==qty){
+    throw new Error("Supabase bekräftade inte det nya saldot");
+  }
 
-  article.locations=article.locations||{};
-  article.locations[locKey]={qty:String(saved.antal),place:saved.plats||""};
-  article._stockIds=article._stockIds||{};
   article._stockIds[locKey]=saved.id;
+  article.locations=article.locations||{};
+  article.locations[locKey]={
+    qty:String(saved.antal),
+    place:String(saved.hyllplats||"")
+  };
   return saved;
 }
 async function quickStock(delta){
   if(!current)return;
-  const p=selected,l=current.locations[p]||{qty:'0',place:''};
+  const p=selected;
+  const l=current.locations?.[p]||{qty:'0',place:''};
   const old=Math.max(0,parseInt(l.qty,10)||0);
-  if(delta<0 && old<1){toastMsg('Saldot är redan 0');return}
+  const next=old+delta;
+  if(next<0){toastMsg('Saldot är redan 0');return}
+
   try{
-    await setStockV29(current,p,old+delta,l.place||'');
-    dqty.value=old+delta; dold.textContent=(old+delta)+' st';
-    detailStocks.innerHTML=stockHTML(current,false);renderAllStockEditors();renderHome();
+    await setStockV29(current,p,next,l.place||'');
+    await loadSupabase(false);
+    const refreshed=allData().find(x=>x.id===current.id);
+    if(refreshed)current=refreshed;
+    const saved=Math.max(0,parseInt(current.locations?.[p]?.qty,10)||0);
+
+    dqty.value=saved;
+    dold.textContent=saved+' st';
+    detailStocks.innerHTML=stockHTML(current,false);
+    renderAllStockEditors();
+    renderHome();
     toastMsg(delta>0?'1 st inlagd':'1 st uttagen');
-  }catch(e){toastMsg('Kunde inte ändra saldot');console.error(e)}
+  }catch(e){
+    toastMsg('Kunde inte ändra saldot: '+(e?.message||e));
+    console.error(e);
+  }
 }
 function openTransfer(){
   if(!current)return;
@@ -1421,11 +1472,28 @@ function startWithdrawScanner(){
 function renderWithdrawSearch(){
   const q=(withdrawQ.value||'').trim().toLowerCase();
   if(!q){withdrawResults.innerHTML='';return}
-  const a=allData().filter(x=>x.id.toLowerCase().includes(q)||x.name.toLowerCase().includes(q)).slice(0,30);
-  withdrawResults.innerHTML=a.map(x=>`<div class="card" onclick="selectWithdraw(${JSON.stringify(x.id)})"><b>${esc(x.id)}</b><br>${esc(x.name)}</div>`).join('')||'<div class="card">Ingen artikel hittades.</div>';
+
+  const raw=allData().filter(x =>
+    String(x.id||'').toLowerCase().includes(q) ||
+    String(x.name||'').toLowerCase().includes(q)
+  );
+
+  const unique=[];
+  const seen=new Set();
+  for(const x of raw){
+    const k=String(x.id||'').trim().toLowerCase();
+    if(!k || seen.has(k))continue;
+    seen.add(k);
+    unique.push(x);
+    if(unique.length>=30)break;
+  }
+
+  withdrawResults.innerHTML=unique.map(x =>
+    `<div class="card" onclick="selectWithdraw(${JSON.stringify(x.id)})"><b>${esc(x.id)}</b><br>${esc(x.name)}</div>`
+  ).join('')||'<div class="card">Ingen artikel hittades.</div>';
 }
 function selectWithdraw(id){
-  withdrawCurrent=allData().find(x=>x.id===id);
+  withdrawCurrent=allData().filter(x=>x.id===id).sort((a,b)=>(b.dbId?1:0)-(a.dbId?1:0))[0];
   if(!withdrawCurrent)return;
   withdrawResults.innerHTML='';
   const ps=['jimmy','oskar','jonathan','lager','kemi'];
@@ -1455,13 +1523,25 @@ async function doWithdraw(n){
   const l=withdrawCurrent.locations?.[p]||{qty:'0',place:''};
   const have=Math.max(0,parseInt(l.qty,10)||0);
   if(have<n){toastMsg('Det finns bara '+have+' st');return}
+
   try{
+    const articleId=withdrawCurrent.id;
     await setStockV29(withdrawCurrent,p,have-n,l.place||'');
-    toastMsg('Tog ut '+n+' st från '+names[p]);
+    await loadSupabase(false);
+
+    // Re-resolve the article after sync so the UI shows the actual database value.
+    withdrawCurrent=allData().filter(x=>x.id===articleId).sort((a,b)=>(b.dbId?1:0)-(a.dbId?1:0))[0];
+    if(!withdrawCurrent)throw new Error("Artikeln kunde inte läsas tillbaka");
+
+    const saved=Math.max(0,parseInt(withdrawCurrent.locations?.[p]?.qty,10)||0);
+    if(saved!==have-n)throw new Error("Fel saldo efter synk");
+
     updateRefillBadge();
-    selectWithdraw(withdrawCurrent.id);
+    selectWithdraw(articleId);
+    renderHome();
+    toastMsg('Tog ut '+n+' st från '+names[p]+' • nytt saldo '+saved);
   }catch(e){
-    toastMsg('Kunde inte registrera uttaget');
+    toastMsg('Kunde inte registrera uttaget: '+(e?.message||e));
     console.error(e);
   }
 }
