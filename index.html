@@ -91,7 +91,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v33.5 automatisk OCR-rotation 0/90/180/270 -->
+<!-- v33.6 filter mot falska OCR-rader -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -1969,75 +1969,45 @@ function findKnownArticle(candidate){
 }
 
 function parseLelyDeliveryText(text){
-  const raw=String(text||'').replace(/\u00a0/g,' ');
-  const lines=raw.split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
+  const lines=String(text||'').split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
   const out=[];
+  const art=/\b([0-9]\.[0-9]{4}\.[0-9]{4}\.[0-9A-Z])\b/i;
 
-  // Accept normal Lely numbers and OCR variants with missing/spaced dots.
-  // Examples: 5.1002.2558.0, 9.1057.0060.3, 5100225580, 5 1002 2558 0.
-  const patterns=[
-    /\b[0-9OQ][.\s]?[0-9OQIL|]{4}[.\s]?[0-9OQIL|]{4}[.\s]?[0-9A-ZOQIL|]\b/gi,
-    /\b[0-9OQ][0-9OQIL|]{9}\b/gi
-  ];
+  for(const line of lines){
+    const m=line.match(art);
+    if(!m)continue;
 
-  for(let li=0;li<lines.length;li++){
-    const line=lines[li];
-    let hits=[];
-    for(const re of patterns){ re.lastIndex=0; hits.push(...(line.match(re)||[])); }
+    const no=m[1].toUpperCase();
+    const known=findKnownArticle(no);
 
-    for(const hit of hits){
-      let compact=normalizeLelyArticle(hit).replace(/\./g,'');
-      if(compact.length!==10)continue;
-      const no=`${compact[0]}.${compact.slice(1,5)}.${compact.slice(5,9)}.${compact[9]}`;
-      const known=findKnownArticle(no);
+    // v33.6:
+    // Lely-delarna på följesedeln använder normalt 5.x eller 9.x.
+    // Om OCR hittar t.ex. ett ordernummer som "3.0017.8548.4"
+    // släpps det bara igenom om artikelnumret faktiskt redan finns i Lager Gotland.
+    if(!known && !/^[59]\./.test(no))continue;
 
-      // Reject suspicious OCR matches unless they look exactly like a Lely number
-      // or are already known in Lager Gotland.
-      if(!known && !/^[0-9]\.[0-9]{4}\.[0-9]{4}\.[0-9A-Z]$/.test(no))continue;
+    const after=line.slice(line.indexOf(m[0])+m[0].length).trim();
 
-      // Quantity can appear as "2 ST", "2 EA", "Qty 2" or as a nearby isolated integer.
-      const context=[line,lines[li+1]||'',lines[li-1]||''].join(' ');
-      let qty=1;
-      let qm=context.match(/(?:QTY|QUANTITY|ANTAL)\s*[:xX]?\s*(\d{1,4})\b/i)
-          || context.match(/\b(\d{1,4})\s*(?:ST|PCS?|EA)\b/i);
-      if(qm)qty=Math.max(1,parseInt(qm[1],10)||1);
+    let qty=1;
+    const qmatch=line.match(/\b(\d+)\s*(?:EA|ST)\b/i);
+    if(qmatch)qty=Math.max(1,parseInt(qmatch[1],10)||1);
 
-      let name=known?.name||'';
-      if(!name){
-        const pos=line.toUpperCase().indexOf(hit.toUpperCase());
-        let after=pos>=0?line.slice(pos+hit.length).trim():'';
-        name=after
-          .replace(/\b(?:QTY|QUANTITY|ANTAL)\b.*$/i,'')
-          .replace(/\b\d{1,4}\s*(?:ST|PCS?|EA)\b.*$/i,'')
-          .replace(/\s+\d+[,.]\d+.*$/,'').trim();
-      }
+    let name=known?.name||'';
 
-      const existing=out.find(x=>x.article_no===no);
-      if(existing){ existing.qty=Math.max(existing.qty,qty); if(!existing.part_name&&name)existing.part_name=name; }
-      else out.push({article_no:no,part_name:name,qty});
+    if(!name){
+      name=after.replace(/\s+\d+[,.]\d+.*$/,'').trim();
+
+      // Reject OCR rows that are really order/line data rather than a part description.
+      const letters=(name.match(/[A-Za-zÅÄÖåäö]/g)||[]).length;
+      const digits=(name.match(/\d/g)||[]).length;
+      if(!name || (letters<2 && digits>=4))continue;
+    }
+
+    if(!out.some(x=>x.article_no===no)){
+      out.push({article_no:no,part_name:name,qty});
     }
   }
   return out;
-}
-
-function rotateOcrCanvas(source,deg){
-  const rad=deg*Math.PI/180;
-  const swap=deg===90||deg===270;
-  const c=document.createElement('canvas');
-  c.width=swap?source.height:source.width;
-  c.height=swap?source.width:source.height;
-  const ctx=c.getContext('2d');
-  ctx.translate(c.width/2,c.height/2);
-  ctx.rotate(rad);
-  ctx.drawImage(source,-source.width/2,-source.height/2);
-  return c;
-}
-
-function scoreLelyOcr(text){
-  const rows=parseLelyDeliveryText(text);
-  let known=0;
-  for(const r of rows) if(findKnownArticle(r.article_no)) known++;
-  return {rows,score:rows.length + known*4,known};
 }
 
 async function readDeliveryPhoto(file){
