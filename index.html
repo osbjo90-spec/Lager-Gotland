@@ -173,7 +173,7 @@ nav{z-index:30}
       style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#111"></video>
 
     <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
-      <div style="width:min(90vw,620px);height:min(72vh,850px);border:4px solid #fff;border-radius:14px;box-shadow:0 0 0 9999px #0007;position:relative">
+      <div id="deliveryCameraGuide" style="width:min(90vw,620px);height:min(72vh,850px);border:4px solid #fff;border-radius:14px;box-shadow:0 0 0 9999px #0007;position:relative">
         <div style="position:absolute;top:-42px;left:0;right:0;text-align:center;font-weight:800;text-shadow:0 2px 5px #000">
           Placera hela följesedeln innanför ramen
         </div>
@@ -2214,12 +2214,40 @@ async function captureDeliveryPhoto(){
   }
 
   const canvas=deliveryCameraCanvas;
-  canvas.width=video.videoWidth;
-  canvas.height=video.videoHeight;
+  const guide=document.getElementById('deliveryCameraGuide');
+  const vr=video.getBoundingClientRect();
+  const gr=guide?.getBoundingClientRect();
+
+  const vw=video.videoWidth, vh=video.videoHeight;
+  const coverScale=Math.max(vr.width/vw, vr.height/vh);
+  const shownW=vw*coverScale, shownH=vh*coverScale;
+  const cutLeft=(shownW-vr.width)/2;
+  const cutTop=(shownH-vr.height)/2;
+
+  let sx=0, sy=0, sw=vw, sh=vh;
+  if(gr){
+    const pad=6;
+    const left=(gr.left-vr.left)+cutLeft+pad;
+    const top=(gr.top-vr.top)+cutTop+pad;
+    const right=(gr.right-vr.left)+cutLeft-pad;
+    const bottom=(gr.bottom-vr.top)+cutTop-pad;
+    sx=Math.max(0,left/coverScale);
+    sy=Math.max(0,top/coverScale);
+    sw=Math.min(vw-sx,(right-left)/coverScale);
+    sh=Math.min(vh-sy,(bottom-top)/coverScale);
+  }
+
+  const targetLong=2600;
+  const upscale=Math.max(1,Math.min(2.2,targetLong/Math.max(sw,sh)));
+  canvas.width=Math.round(sw*upscale);
+  canvas.height=Math.round(sh*upscale);
   const ctx=canvas.getContext('2d');
-  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  ctx.imageSmoothingEnabled=true;
+  ctx.imageSmoothingQuality='high';
+  ctx.drawImage(video,sx,sy,sw,sh,0,0,canvas.width,canvas.height);
 
   closeDeliveryCamera();
+  ocrStatus.textContent='Bilden beskars till ramen och förstoras för läsning…';
 
   canvas.toBlob(async blob=>{
     if(!blob){
