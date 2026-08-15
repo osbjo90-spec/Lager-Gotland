@@ -91,7 +91,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v33.7 OCR fix: scoring + rotation helpers -->
+<!-- v33.8 OCR matchar artikelregister + bättre Quantity -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -2011,38 +2011,142 @@ function parseLelyDeliveryText(text){
 }
 
 function rotateOcrCanvas(source,deg){
-  const d=((Number(deg)||0)%360+360)%360;
-  if(d===0)return source;
+  const rad=deg*Math.PI/180;
+  const swap=deg===90||deg===270;
   const c=document.createElement('canvas');
-  const swap=d===90||d===270;
   c.width=swap?source.height:source.width;
   c.height=swap?source.width:source.height;
   const ctx=c.getContext('2d');
   ctx.translate(c.width/2,c.height/2);
-  ctx.rotate(d*Math.PI/180);
+  ctx.rotate(rad);
   ctx.drawImage(source,-source.width/2,-source.height/2);
   return c;
 }
 
-function scoreLelyOcr(text){
-  const rows=parseLelyDeliveryText(text);
-  let known=0;
-  for(const row of rows){
-    if(findKnownArticle(row.article_no))known++;
+function normalizeArticleNo(s){
+  return String(s||'').trim().toUpperCase()
+    .replace(/[OQ]/g,'0')
+    .replace(/[IL|]/g,'1')
+    .replace(/[,:;]/g,'.')
+    .replace(/\s+/g,'');
+}
+
+function articleDigits(s){
+  return normalizeArticleNo(s).replace(/\D/g,'');
+}
+
+function findBestKnownArticle(rawNo){
+  const exact=findKnownArticle(rawNo);
+  if(exact)return {article:exact,distance:0};
+
+  const target=articleDigits(rawNo);
+  if(target.length<8)return null;
+
+  let best=null;
+  for(const a of (externalData||[]).concat(allData())){
+    const d=articleDigits(a.id);
+    if(d.length!==target.length)continue;
+    let dist=0;
+    for(let i=0;i<d.length;i++) if(d[i]!==target[i]) dist++;
+    if(dist<=1 && (!best || dist<best.distance)){
+      best={article:a,distance:dist};
+      if(dist===0)break;
+    }
+  }
+  return best;
+}
+
+function parseQuantityFromLine(line,articleToken){
+  const clean=String(line||'').replace(/\s+/g,' ').trim();
+
+  // Best case: quantity immediately before EA/ST, which is the Lely Quantity column.
+  const ea=[...clean.matchAll(/\b(\d{1,3})\s*(EA|ST)\b/ig)];
+  if(ea.length){
+    const q=parseInt(ea[ea.length-1][1],10);
+    if(Number.isFinite(q) && q>0 && q<=999)return q;
   }
 
-  // Prefer the orientation that yields many valid Lely article rows,
-  // especially rows that match the existing Lager Gotland article register.
-  // Known matches are weighted heavily to avoid order/line numbers winning.
-  let score=(rows.length*10)+(known*30);
+  // OCR sometimes drops "EA". On a Lely row the quantity is normally the last small integer.
+  const pos=clean.toUpperCase().indexOf(String(articleToken||'').toUpperCase());
+  const tail=pos>=0 ? clean.slice(pos+String(articleToken||'').length) : clean;
+  const ints=[...tail.matchAll(/(?:^|\s)(\d{1,3})(?=\s|$)/g)]
+    .map(m=>parseInt(m[1],10))
+    .filter(n=>Number.isFinite(n) && n>0 && n<=100);
 
-  const t=String(text||'');
-  if(/DELIVERY\s*NOTE/i.test(t))score+=8;
-  if(/\bITEM\b/i.test(t))score+=4;
-  if(/\bQUANTITY\b/i.test(t))score+=4;
-  if(/LELY/i.test(t))score+=3;
+  if(ints.length)return ints[ints.length-1];
+  return 1;
+}
 
-  return {rows,known,score};
+function parseLelyDeliveryText(text){
+  const lines=String(text||'').split(/\r?\n/)
+    .map(x=>x.replace(/\s+/g,' ').trim())
+    .filter(Boolean);
+
+  const out=[];
+  // Keep OCR tolerant while still restricting to Lely-style dotted item numbers.
+  const art=/\b([0-9OQIL|][\.,:;][0-9OQIL|]{4}[\.,:;][0-9OQIL|]{4}[\.,:;][0-9A-Z|])\b/i;
+
+  for(const line of lines){
+    const m=line.match(art);
+    if(!m)continue;
+
+    let rawNo=normalizeArticleNo(m[1]);
+    rawNo=rawNo.replace(/^([0-9])([0-9]{4})([0-9]{4})([0-9A-Z])$/,'$1.$2.$3.$4');
+
+    const matched=findBestKnownArticle(rawNo);
+    const known=matched?.article||null;
+
+    // Unknown OCR rows must still look like real Lely 5.x or 9.x items.
+    if(!known && !/^[59]\./.test(rawNo))continue;
+
+    const finalNo=known?.id || rawNo;
+    const after=line.slice(line.indexOf(m[0])+m[0].length).trim();
+
+    const qty=parseQuantityFromLine(line,m[0]);
+
+    let name=known?.name||'';
+    if(!name){
+      name=after
+        .replace(/\s+\d+[,.]\d+.*$/,'')
+        .replace(/\s+\d{1,3}\s*(EA|ST)\b.*$/i,'')
+        .trim();
+
+      const letters=(name.match(/[A-Za-zÅÄÖåäö]/g)||[]).length;
+      const digits=(name.match(/\d/g)||[]).length;
+      if(!name || (letters<2 && digits>=4))continue;
+    }
+
+    // Deduplicate; keep the stronger quantity if OCR found the same item twice.
+    const prev=out.find(x=>String(x.article_no)===String(finalNo));
+    if(prev){
+      if(qty>prev.qty)prev.qty=qty;
+      if(!prev.part_name && name)prev.part_name=name;
+    }else{
+      out.push({
+        article_no:finalNo,
+        part_name:name,
+        qty,
+        _known:!!known,
+        _matchDistance:matched?.distance ?? 99
+      });
+    }
+  }
+  return out;
+}
+
+function scoreLelyOcr(text){
+  const rows=parseLelyDeliveryText(text);
+  let known=0, exact=0, qtyResolved=0;
+  for(const r of rows){
+    if(r._known)known++;
+    if(r._known && r._matchDistance===0)exact++;
+    if((parseInt(r.qty,10)||1)>1)qtyResolved++;
+  }
+
+  // Prefer real inventory matches heavily, then exact matches, then row count,
+  // and lastly rows where OCR actually recovered a non-default quantity.
+  const score = known*20 + exact*8 + rows.length*2 + qtyResolved*3;
+  return {rows,score,known,exact,qtyResolved};
 }
 
 async function readDeliveryPhoto(file){
@@ -2054,35 +2158,27 @@ async function readDeliveryPhoto(file){
     if(!window.Tesseract)throw new Error('Textläsningen kunde inte laddas. Kontrollera internetanslutningen.');
 
     let source;
-    try{
-      const bmp=await createImageBitmap(file);
-      const scale=Math.min(2,Math.max(1.30,2200/Math.max(bmp.width,bmp.height)));
-      const canvas=document.createElement('canvas');
-      canvas.width=Math.round(bmp.width*scale);
-      canvas.height=Math.round(bmp.height*scale);
-      const ctx=canvas.getContext('2d');
-      ctx.drawImage(bmp,0,0,canvas.width,canvas.height);
+    const bmp=await createImageBitmap(file);
+    const scale=Math.min(2.15,Math.max(1.35,2400/Math.max(bmp.width,bmp.height)));
+    const canvas=document.createElement('canvas');
+    canvas.width=Math.round(bmp.width*scale);
+    canvas.height=Math.round(bmp.height*scale);
+    const ctx=canvas.getContext('2d');
+    ctx.drawImage(bmp,0,0,canvas.width,canvas.height);
 
-      const img=ctx.getImageData(0,0,canvas.width,canvas.height);
-      const d=img.data;
-      for(let i=0;i<d.length;i+=4){
-        let g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
-        g=Math.max(0,Math.min(255,(g-128)*1.45+128));
-        d[i]=d[i+1]=d[i+2]=g;
-      }
-      ctx.putImageData(img,0,0);
-      source=canvas;
-    }catch(preErr){
-      console.warn('OCR preprocessing skipped',preErr);
-      const bmp=await createImageBitmap(file);
-      const canvas=document.createElement('canvas');
-      canvas.width=bmp.width; canvas.height=bmp.height;
-      canvas.getContext('2d').drawImage(bmp,0,0);
-      source=canvas;
+    // grayscale + moderate contrast, tuned to preserve thin table digits
+    const img=ctx.getImageData(0,0,canvas.width,canvas.height);
+    const d=img.data;
+    for(let i=0;i<d.length;i+=4){
+      let g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+      g=Math.max(0,Math.min(255,(g-128)*1.32+128));
+      d[i]=d[i+1]=d[i+2]=g;
     }
+    ctx.putImageData(img,0,0);
+    source=canvas;
 
     const rotations=[0,90,270,180];
-    let best={deg:0,text:'',rows:[],score:-1,known:0};
+    let best={deg:0,text:'',rows:[],score:-1,known:0,exact:0,qtyResolved:0};
 
     for(let ri=0;ri<rotations.length;ri++){
       const deg=rotations[ri];
@@ -2102,25 +2198,31 @@ async function readDeliveryPhoto(file){
 
       const text=result?.data?.text||'';
       const scored=scoreLelyOcr(text);
+      console.log('Lely OCR rotation',deg,scored);
 
       if(scored.score>best.score){
-        best={deg,text,rows:scored.rows,score:scored.score,known:scored.known};
+        best={deg,text,...scored};
       }
 
-      if(scored.rows.length>=20 && scored.known>=Math.max(8,Math.floor(scored.rows.length*0.45))){
-        best={deg,text,rows:scored.rows,score:scored.score,known:scored.known};
+      // Only stop early when we have a strong result: many rows and most matched to inventory.
+      if(scored.rows.length>=24 && scored.known>=20 && scored.exact>=16){
+        best={deg,text,...scored};
         break;
       }
     }
 
-    ocrRows=best.rows;
+    ocrRows=best.rows.map(({_known,_matchDistance,...r})=>r);
     renderOcrRows();
 
     if(ocrRows.length){
+      const matchText=best.known
+        ? ' '+best.known+' matchade artikelregistret.'
+        : '';
       ocrStatus.textContent=(best.deg
         ? 'Bilden roterades automatiskt '+best.deg+'°. '
         : '')+
-        'Hittade '+ocrRows.length+' artiklar. Kontrollera antal och benämningar innan du sparar.';
+        'Hittade '+ocrRows.length+' artiklar.'+matchText+
+        ' Kontrollera antal och benämningar innan du sparar.';
     }else{
       ocrStatus.textContent='Kunde inte hitta några artikelrader trots automatisk rotation. Prova ett rakare/närmare foto eller lägg in manuellt.';
     }
