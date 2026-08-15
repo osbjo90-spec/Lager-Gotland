@@ -91,7 +91,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v33.9 bred OCR från v33.5 + endast smalt orderfilter -->
+<!-- v34.3 kamerabeskärning + extra detalj-OCR Item/Quantity -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -2041,6 +2041,53 @@ function scoreLelyOcr(text){
   return {rows,score:rows.length + known*4,known};
 }
 
+
+function cropCanvasRegion(source,x1,y1,x2,y2,targetLong=3600){
+  const sx=Math.max(0,Math.round(source.width*x1));
+  const sy=Math.max(0,Math.round(source.height*y1));
+  const sw=Math.max(1,Math.min(source.width-sx,Math.round(source.width*(x2-x1))));
+  const sh=Math.max(1,Math.min(source.height-sy,Math.round(source.height*(y2-y1))));
+
+  const scale=Math.max(1,Math.min(2.4,targetLong/Math.max(sw,sh)));
+  const c=document.createElement('canvas');
+  c.width=Math.round(sw*scale);
+  c.height=Math.round(sh*scale);
+  const ctx=c.getContext('2d');
+  ctx.imageSmoothingEnabled=true;
+  ctx.imageSmoothingQuality='high';
+  ctx.drawImage(source,sx,sy,sw,sh,0,0,c.width,c.height);
+
+  // Lite försiktigare kontrast än huvudpasset för att behålla små Quantity-siffror.
+  try{
+    const img=ctx.getImageData(0,0,c.width,c.height);
+    const d=img.data;
+    for(let i=0;i<d.length;i+=4){
+      let g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+      g=Math.max(0,Math.min(255,(g-128)*1.22+128));
+      d[i]=d[i+1]=d[i+2]=g;
+    }
+    ctx.putImageData(img,0,0);
+  }catch(e){}
+  return c;
+}
+
+function mergeDeliveryRows(baseRows,detailRows){
+  const merged=(baseRows||[]).map(x=>({...x}));
+  for(const d of (detailRows||[])){
+    const existing=merged.find(x=>x.article_no===d.article_no);
+    if(existing){
+      // Detaljpasset används främst för Quantity. Ett säkert värde >1 vinner över fallback 1.
+      if((parseInt(d.qty,10)||1)>1 || (parseInt(existing.qty,10)||1)===1){
+        existing.qty=Math.max(parseInt(existing.qty,10)||1,parseInt(d.qty,10)||1);
+      }
+      if(!existing.part_name && d.part_name)existing.part_name=d.part_name;
+    }else{
+      merged.push({...d});
+    }
+  }
+  return merged;
+}
+
 async function readDeliveryPhoto(file){
   if(!file)return;
   ocrStatus.textContent='Förbereder följesedeln…';
@@ -2109,16 +2156,44 @@ async function readDeliveryPhoto(file){
       }
     }
 
-    ocrRows=best.rows;
+    // Extra detaljpass på den valda rotationen:
+    // zooma in själva tabellen (Item -> Description -> Quantity) och läs en gång till.
+    // Detta påverkar inte "Välj bild"-logiken i övrigt, men hjälper särskilt kamerabilder.
+    let detailRows=[];
+    try{
+      const bestCanvas=best.deg===0?source:rotateOcrCanvas(source,best.deg);
+
+      // På Lely-följesedeln ligger tabellen under sidhuvudet.
+      // Vi tar med Item, Description och Quantity men skär bort större delen av marginalerna.
+      const tableZoom=cropCanvasRegion(bestCanvas,0.12,0.20,0.995,0.985,3800);
+
+      ocrStatus.textContent='Detaljläser Item och Quantity…';
+      const detailResult=await Tesseract.recognize(tableZoom,'eng',{
+        logger:m=>{
+          if(m.status==='recognizing text'){
+            ocrStatus.textContent='Detaljläser Item och Quantity… '+Math.round((m.progress||0)*100)+' %';
+          }
+        }
+      });
+
+      detailRows=parseLelyDeliveryText(detailResult?.data?.text||'');
+      console.log('Lely detaljpass:',detailRows);
+    }catch(detailErr){
+      console.warn('Detaljpass hoppades över',detailErr);
+    }
+
+    ocrRows=mergeDeliveryRows(best.rows,detailRows);
     renderOcrRows();
 
     if(ocrRows.length){
+      const added=Math.max(0,ocrRows.length-best.rows.length);
       ocrStatus.textContent=(best.deg
         ? 'Bilden roterades automatiskt '+best.deg+'°. '
         : '')+
-        'Hittade '+ocrRows.length+' artiklar. Kontrollera antal och benämningar innan du sparar.';
+        'Hittade '+ocrRows.length+' artiklar'+(added?' ('+added+' extra via detaljläsning)':'')+
+        '. Kontrollera antal och benämningar innan du sparar.';
     }else{
-      ocrStatus.textContent='Kunde inte hitta några artikelrader trots automatisk rotation. Prova ett rakare/närmare foto eller lägg in manuellt.';
+      ocrStatus.textContent='Kunde inte hitta några artikelrader trots automatisk rotation och detaljläsning. Prova ett rakare/närmare foto eller lägg in manuellt.';
     }
   }catch(e){
     ocrStatus.textContent=e.message||String(e);
