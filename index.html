@@ -229,15 +229,8 @@ nav{z-index:30}
 </select>
 <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input id="todoNeedsPart" type="checkbox" onchange="toggleTodoPart()"> Del behöver beställas</label>
 <div id="todoPartFields" style="display:none">
-<label class="muted">Artikelnummer</label><div class="searchline"><input id="todoArticle" placeholder="Artikelnummer"><button onclick="startTodoScanner()">📷 Skanna</button></div>
-<label class="muted">Del / benämning</label><input id="todoPartName" placeholder="Benämning">
-<label class="muted">Antal</label><input id="todoPartQty" type="number" min="1" value="1">
-<label class="muted" style="display:block;margin-top:10px">Beställningsstatus</label>
-<select id="todoPartStatus">
-  <option value="Behöver beställas">🟠 Behöver beställas</option>
-  <option value="Beställd">🔵 Beställd</option>
-  <option value="Levererad">🟢 Levererad</option>
-</select>
+  <div id="todoPartsList"></div>
+  <button type="button" style="width:100%;margin-top:10px" onclick="addTodoPart()">＋ Lägg till del</button>
 </div>
 <button class="green" style="width:100%;margin-top:14px" onclick="saveTodo()">Spara jobb</button>
 </div></div>
@@ -1180,9 +1173,12 @@ async function startScanner(){
         stopScanner();
         if(scannerTarget==='todo'){
           scannerTarget='search';
-          todoArticle.value=code;
+          const idx=Number.isInteger(todoScanPartIndex)?todoScanPartIndex:0;
+          const a=document.getElementById('todoArticle'+idx);
+          const n=document.getElementById('todoPartName'+idx);
+          if(a)a.value=code;
           const exact=allData().find(x=>String(x.id).trim().toLowerCase()===code.toLowerCase());
-          if(exact) todoPartName.value=exact.name||'';
+          if(exact&&n)n.value=exact.name||'';
           todoModal.style.display='block';
           return;
         }
@@ -1730,12 +1726,11 @@ function renderTodos(){
     <p style="margin:8px 0"><b>${x.status==='Klar'?'✅ Klart':'🟠 Aktivt'}</b>${x.assigned_to?` &nbsp; 👤 ${esc(x.assigned_to)}`:''}</p>
     <p>${esc(x.description||'')}</p>
     ${x.needs_part?`<div class="card" style="margin:10px 0;background:#fafafa">
-      <p style="margin:0 0 6px"><b>📦 Del:</b> ${esc(x.article_no||'')} ${esc(x.part_name||'')} × ${Math.max(1,parseInt(x.part_qty,10)||1)}</p>
-      <p style="margin:0 0 8px"><b>${x.part_status==='Levererad'?'🟢 Levererad':x.part_status==='Beställd'?'🔵 Beställd':'🟠 Behöver beställas'}</b></p>
-      <div class="row">
-        ${x.part_status!=='Beställd'&&x.part_status!=='Levererad'?`<button onclick="setPartStatus(${JSON.stringify(x.id)},'Beställd')">Markera beställd</button>`:''}
-        ${x.part_status==='Beställd'?`<button class="green" onclick="setPartStatus(${JSON.stringify(x.id)},'Levererad')">Markera levererad</button>`:''}
-      </div>
+      <p style="margin:0 0 8px"><b>📦 ${getTodoParts(x).length} ${getTodoParts(x).length===1?'del':'delar'}</b></p>
+      ${getTodoParts(x).map((p,pi)=>`<div style="padding:7px 0;${pi?'border-top:1px solid #ddd':''}">
+        <b>${esc(p.article_no||'')}</b> ${esc(p.part_name||'')} × ${Math.max(1,parseInt(p.qty??p.part_qty,10)||1)}
+        <div class="muted">${p.status==='Levererad'?'🟢 Levererad':p.status==='Beställd'?'🔵 Beställd':'🟠 Behöver beställas'}</div>
+      </div>`).join('')}
     </div>`:''}
     <div class="row">
       ${x.status!=='Klar'
@@ -1745,32 +1740,62 @@ function renderTodos(){
       <button onclick="deleteTodo(${JSON.stringify(x.id)})">Ta bort</button>
     </div></div>`).join(''):'<div class="card"><b>Inga jobb här.</b></div>';
 }
+let todoPartsDraft=[];
+let todoScanPartIndex=0;
+function legacyTodoPart(x){
+  if(!x?.needs_part)return [];
+  return [{article_no:x.article_no||'',part_name:x.part_name||'',qty:Math.max(1,parseInt(x.part_qty,10)||1),status:x.part_status||'Behöver beställas'}];
+}
+function getTodoParts(x){
+  if(Array.isArray(x?.parts)&&x.parts.length)return x.parts;
+  if(typeof x?.parts==='string'&&x.parts.trim()){try{const p=JSON.parse(x.parts);if(Array.isArray(p)&&p.length)return p}catch(e){}}
+  return legacyTodoPart(x);
+}
+function renderTodoPartsEditor(){
+  const el=document.getElementById('todoPartsList');if(!el)return;
+  el.innerHTML=todoPartsDraft.map((p,i)=>`<div class="card" style="margin:10px 0;background:#fafafa;padding:12px">
+    <div class="row between"><b>📦 Del ${i+1}</b>${todoPartsDraft.length>1?`<button type="button" onclick="removeTodoPart(${i})">Ta bort</button>`:''}</div>
+    <label class="muted">Artikelnummer</label>
+    <div class="searchline"><input id="todoArticle${i}" value="${esc(p.article_no||'')}" placeholder="Artikelnummer" oninput="todoPartsDraft[${i}].article_no=this.value">
+      <button type="button" onclick="startTodoScanner(${i})">📷 Skanna</button></div>
+    <label class="muted">Del / benämning</label>
+    <input id="todoPartName${i}" value="${esc(p.part_name||'')}" placeholder="Benämning" oninput="todoPartsDraft[${i}].part_name=this.value">
+    <label class="muted">Antal</label>
+    <input id="todoPartQty${i}" type="number" min="1" value="${Math.max(1,parseInt(p.qty,10)||1)}" oninput="todoPartsDraft[${i}].qty=Math.max(1,parseInt(this.value,10)||1)">
+    <label class="muted" style="display:block;margin-top:10px">Beställningsstatus</label>
+    <select id="todoPartStatus${i}" onchange="todoPartsDraft[${i}].status=this.value">
+      <option value="Behöver beställas" ${p.status==='Behöver beställas'?'selected':''}>🟠 Behöver beställas</option>
+      <option value="Beställd" ${p.status==='Beställd'?'selected':''}>🔵 Beställd</option>
+      <option value="Levererad" ${p.status==='Levererad'?'selected':''}>🟢 Levererad</option>
+    </select>
+  </div>`).join('');
+}
+function addTodoPart(){todoPartsDraft.push({article_no:'',part_name:'',qty:1,status:'Behöver beställas'});renderTodoPartsEditor()}
+function removeTodoPart(i){todoPartsDraft.splice(i,1);if(!todoPartsDraft.length)addTodoPart();else renderTodoPartsEditor()}
+function collectTodoParts(){
+  return todoPartsDraft.map((p,i)=>({article_no:(document.getElementById('todoArticle'+i)?.value||p.article_no||'').trim(),part_name:(document.getElementById('todoPartName'+i)?.value||p.part_name||'').trim(),qty:Math.max(1,parseInt(document.getElementById('todoPartQty'+i)?.value||p.qty,10)||1),status:document.getElementById('todoPartStatus'+i)?.value||p.status||'Behöver beställas'})).filter(p=>p.article_no||p.part_name);
+}
 function openTodoForm(x=null){
   todoEditId=x?.id||null;todoModalTitle.textContent=x?'Ändra jobb':'Nytt jobb';
   todoCustomer.value=x?.customer||'';todoType.value=x?.job_type||'';todoText.value=x?.description||'';
   todoPriority.value=x?.priority||'Normal';todoAssignee.value=x?.assigned_to||'';todoNeedsPart.checked=!!x?.needs_part;
-  todoArticle.value=x?.article_no||'';todoPartName.value=x?.part_name||'';todoPartQty.value=x?.part_qty||1;todoPartStatus.value=x?.part_status||'Behöver beställas';
-  toggleTodoPart();todoModal.style.display='block';
+  todoPartsDraft=getTodoParts(x).map(p=>({article_no:p.article_no||'',part_name:p.part_name||'',qty:Math.max(1,parseInt(p.qty??p.part_qty,10)||1),status:p.status||p.part_status||'Behöver beställas'}));
+  if(!todoPartsDraft.length)todoPartsDraft=[{article_no:'',part_name:'',qty:1,status:'Behöver beställas'}];
+  toggleTodoPart();renderTodoPartsEditor();todoModal.style.display='block';
 }
 function closeTodoForm(){todoModal.style.display='none';scannerTarget='search'}
-function toggleTodoPart(){todoPartFields.style.display=todoNeedsPart.checked?'block':'none'}
-function startTodoScanner(){scannerTarget='todo';startScanner()}
+function toggleTodoPart(){todoPartFields.style.display=todoNeedsPart.checked?'block':'none';if(todoNeedsPart.checked&&!todoPartsDraft.length)addTodoPart()}
+function startTodoScanner(i=0){todoScanPartIndex=i;scannerTarget='todo';startScanner()}
 function editTodo(id){const x=todos.find(t=>String(t.id)===String(id));if(x)openTodoForm(x)}
 async function saveTodo(){
-  const row={customer:todoCustomer.value.trim(),job_type:todoType.value.trim(),description:todoText.value.trim(),
-    priority:todoPriority.value,assigned_to:todoAssignee.value,status:'Aktiv',needs_part:todoNeedsPart.checked,
-    article_no:todoNeedsPart.checked?todoArticle.value.trim():'',part_name:todoNeedsPart.checked?todoPartName.value.trim():'',
-    part_qty:todoNeedsPart.checked?Math.max(1,parseInt(todoPartQty.value,10)||1):1,
-    part_status:todoNeedsPart.checked?todoPartStatus.value:''};
+  const parts=todoNeedsPart.checked?collectTodoParts():[];
+  const first=parts[0]||{article_no:'',part_name:'',qty:1,status:''};
+  const row={customer:todoCustomer.value.trim(),job_type:todoType.value.trim(),description:todoText.value.trim(),priority:todoPriority.value,assigned_to:todoAssignee.value,status:'Aktiv',needs_part:parts.length>0,article_no:first.article_no,part_name:first.part_name,part_qty:first.qty,part_status:first.status,parts};
   try{
-    if(todoEditId){
-      const old=todos.find(t=>String(t.id)===String(todoEditId));if(old?.status)row.status=old.status;
-      await sbFetch('todo_jobs?id=eq.'+encodeURIComponent(todoEditId),{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify(row)});
-    }else{
-      await sbFetch('todo_jobs',{method:'POST',headers:{Prefer:'return=minimal'},body:JSON.stringify(row)});
-    }
+    if(todoEditId){const old=todos.find(t=>String(t.id)===String(todoEditId));if(old?.status)row.status=old.status;await sbFetch('todo_jobs?id=eq.'+encodeURIComponent(todoEditId),{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify(row)})}
+    else await sbFetch('todo_jobs',{method:'POST',headers:{Prefer:'return=minimal'},body:JSON.stringify(row)});
     closeTodoForm();await syncTodos();toastMsg('Jobbet sparat');
-  }catch(e){toastMsg('Kunde inte spara jobbet');console.error(e)}
+  }catch(e){const msg=String(e?.message||e);if(msg.toLowerCase().includes('parts'))alert('Supabase behöver kolumnen parts. Kör SQL-filen för v34.5 en gång.');toastMsg('Kunde inte spara jobbet');console.error(e)}
 }
 async function setTodoDone(id){
   try{await sbFetch('todo_jobs?id=eq.'+encodeURIComponent(id),{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify({status:'Klar'})});await syncTodos();toastMsg('Jobbet markerat klart')}
