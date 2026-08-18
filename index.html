@@ -91,7 +91,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v34.4 dokument-scanner + separat strikt Quantity-kolumn -->
+<!-- v34.6 flera delar + saldo före/efter vid fördelning -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -148,11 +148,15 @@ nav{z-index:30}
   <div class="row between"><b>Fördela del</b><button onclick="closeInboundModal()">✕</button></div>
   <p id="inboundPartTitle"></p>
   <label class="muted">Till</label>
-  <select id="inboundTarget">
+  <select id="inboundTarget" onchange="updateInboundBalance()">
     <option value="jimmy">Jimmys bil</option><option value="oskar">Oskars bil</option>
     <option value="jonathan">Jonathans bil</option><option value="lager">Lagret</option><option value="kemi">Kemi/Övrigt</option>
   </select>
-  <label class="muted" style="display:block;margin-top:10px">Antal</label><input id="inboundQty" type="number" min="1" value="1">
+  <div id="inboundBalanceInfo" class="card" style="margin:10px 0;background:#f7f9fa;padding:12px">
+  <div class="row between"><span class="muted">Nuvarande saldo</span><b id="inboundCurrentStock">0 st</b></div>
+  <div class="row between" style="margin-top:6px"><span class="muted">Efter fördelning</span><b id="inboundNewStock">0 st</b></div>
+</div>
+<label class="muted" style="display:block;margin-top:10px">Antal</label><input id="inboundQty" type="number" min="1" value="1" oninput="updateInboundBalance()">
   <label class="muted" style="display:block;margin-top:10px">Hyllplats (valfritt)</label><input id="inboundShelf" placeholder="T.ex. H12 eller M5">
   <button class="green" style="width:100%;margin-top:14px" onclick="distributeInbound()">Fördela</button>
 </div></div>
@@ -1877,6 +1881,34 @@ function renderInbound(){
   </div>`).join('') : '<div class="card"><b>✓ Inget ofördelat just nu</b></div>';
 }
 
+function getInboundArticle(){
+  if(!inboundCurrent)return null;
+  const no=String(inboundCurrent.article_no||'').trim().toLowerCase();
+  return (externalData||[]).find(x=>String(x.id).trim().toLowerCase()===no)
+      || allData().find(x=>String(x.id).trim().toLowerCase()===no)
+      || null;
+}
+
+function updateInboundBalance(){
+  if(!inboundCurrent)return;
+  const target=inboundTarget.value;
+  const a=getInboundArticle();
+  const loc=a?.locations?.[target]||{qty:'0',place:''};
+  const old=Math.max(0,parseInt(loc.qty,10)||0);
+  const add=Math.max(0,parseInt(inboundQty.value,10)||0);
+
+  const currentEl=document.getElementById('inboundCurrentStock');
+  const newEl=document.getElementById('inboundNewStock');
+  if(currentEl)currentEl.textContent=old+' st';
+  if(newEl)newEl.textContent=(old+add)+' st';
+
+  // Fyll befintlig hyllplats automatiskt när man byter lagerställe,
+  // men skriv inte över om användaren redan har matat in något.
+  if(inboundShelf && !inboundShelf.value.trim() && loc.place){
+    inboundShelf.value=loc.place;
+  }
+}
+
 function openInboundDistribution(id){
   inboundCurrent=inboundRows.find(x=>String(x.id)===String(id));
   if(!inboundCurrent)return;
@@ -1885,6 +1917,7 @@ function openInboundDistribution(id){
   inboundQty.value=1;
   inboundShelf.value='';
   inboundModal.style.display='block';
+  updateInboundBalance();
 }
 
 async function ensureArticleForInbound(articleNo,name){
