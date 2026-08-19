@@ -127,10 +127,21 @@ nav{z-index:30}
 <div class="row" style="margin-top:8px">
   <button style="flex:1" onclick="openTodos()">📝<span>ToDo</span></button>
   <button style="flex:1" onclick="openServiceHistory()">🔧 Servicehistorik</button>
+  <button style="flex:1" onclick="openCompareStock()">📋 Jämför lager</button>
 </div>
 </div>
 </section>
 
+
+
+<section id="comparestock" class="screen">
+<div class="card">
+ <div class="row between"><b>📋 Jämför lager</b><button onclick="show('home')">Tillbaka</button></div>
+ <p class="muted">Visar delar som Jonathan saknar men som finns i Oskars bil och/eller Jimmys bil.</p>
+ <div class="row"><button class="green" style="flex:1" onclick="renderCompareStock()">↻ Uppdatera</button><button style="flex:1" onclick="printCompareStock()">🖨️ Skriv ut</button></div>
+</div>
+<div class="card"><div class="row between"><b>Saknas hos Jonathan</b><span id="compareCount" class="muted"></span></div><div id="compareStockList"></div></div>
+</section>
 
 <section id="servicehistory" class="screen">
   <div class="card">
@@ -486,7 +497,25 @@ if(currentFileName && externalData){setTimeout(()=>{if(document.getElementById("
 }
 function stat(){let a=rel(),dn=a.filter(x=>inv[key(x)]?.done).length;return{t:a.length,d:dn,l:a.length-dn,p:a.length?Math.round(dn/a.length*100):0}}
 function renderHome(){renderPlaces();let s=stat();placeTitle.textContent=names[selected];pct.textContent=s.p+" %";bar.style.width=s.p+"%";done.textContent=s.d;leftN.textContent=s.l;total.textContent=s.t;if(typeof renderPlaceArticles==="function")renderPlaceArticles()}
-function show(id){document.querySelectorAll(".screen").forEach(x=>x.classList.remove("active"));document.getElementById(id).classList.add("active");document.querySelectorAll("nav button").forEach(x=>x.classList.remove("activeNav"));let n=document.getElementById("n-"+id);if(n)n.classList.add("activeNav");if(id==="home")renderHome();if(id==="search")renderSearch();if(id==="left")renderLeft();if(id==="newpart"){newPartLocation.value=selected}if(id==="cloud")loadCloudSettings()}
+function compareStockRows(){
+ return allData().filter(x=>{
+   const j=Number(displayQty(x,"jonathan"))||0, o=Number(displayQty(x,"oskar"))||0, m=Number(displayQty(x,"jimmy"))||0;
+   return j<=0 && (o>0 || m>0);
+ }).sort((a,b)=>String(a.id).localeCompare(String(b.id),"sv"));
+}
+function openCompareStock(){show("comparestock");renderCompareStock()}
+function renderCompareStock(){
+ const rows=compareStockRows(), el=document.getElementById("compareStockList");
+ document.getElementById("compareCount").textContent=rows.length+" artiklar";
+ el.innerHTML=rows.length?rows.map(x=>`<div class="item"><b>${esc(x.id)}</b><div>${esc(x.name)}</div><div class="stockgrid"><div class="stockbox"><span class="sname">Oskars bil</span><span class="sval">${esc(displayQty(x,"oskar"))} st</span></div><div class="stockbox"><span class="sname">Jimmys bil</span><span class="sval">${esc(displayQty(x,"jimmy"))} st</span></div></div></div>`).join(""):'<p class="muted">Inga artiklar hittades.</p>';
+}
+function printCompareStock(){
+ const rows=compareStockRows();
+ const body=rows.map(x=>`<tr><td>${esc(x.id)}</td><td>${esc(x.name)}</td><td>${esc(displayQty(x,"oskar"))}</td><td>${esc(displayQty(x,"jimmy"))}</td></tr>`).join("");
+ const w=window.open("","_blank"); if(!w){toastMsg("Tillåt popup för utskrift");return}
+ w.document.write(`<!doctype html><html lang="sv"><head><meta charset="utf-8"><title>Lagerjämförelse</title><style>body{font-family:Arial;margin:24px;color:#111}h1{font-size:22px}p{color:#555}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid #ccc;padding:7px;text-align:left}th{background:#eee}@media print{button{display:none}}</style></head><body><h1>Lager Gotland – delar Jonathan saknar</h1><p>${rows.length} artiklar • Oskar/Jimmy har saldo över 0</p><table><thead><tr><th>Artikelnummer</th><th>Benämning</th><th>Oskar</th><th>Jimmy</th></tr></thead><tbody>${body}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`); w.document.close();
+}
+function show(id){document.querySelectorAll(".screen").forEach(x=>x.classList.remove("active"));document.getElementById(id).classList.add("active");document.querySelectorAll("nav button").forEach(x=>x.classList.remove("activeNav"));let n=document.getElementById("n-"+id);if(n)n.classList.add("activeNav");if(id==="home")renderHome();if(id==="search")renderSearch();if(id==="left")renderLeft();if(id==="newpart"){newPartLocation.value=selected}if(id==="cloud")loadCloudSettings();if(id==="comparestock")renderCompareStock()}
 function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
 function displayQty(x,p){
   let l=x.locations[p]||{qty:"",place:""}, s=inv[p+"|"+x.id];
