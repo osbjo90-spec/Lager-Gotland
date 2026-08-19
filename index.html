@@ -91,7 +91,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v34.6 flera delar + saldo före/efter vid fördelning -->
+<!-- v34.7 servicehistorik för Twin och mjölkslang -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -123,9 +123,64 @@ nav{z-index:30}
   </div>
 </div>
 <div class="card">
-<button class="primary" style="width:100%" onclick="openRefill()">📦 Påfyllningslista</button><button onclick="openTodos()">📝<span>ToDo</span></button>
+<button class="primary" style="width:100%" onclick="openRefill()">📦 Påfyllningslista</button>
+<div class="row" style="margin-top:8px">
+  <button style="flex:1" onclick="openTodos()">📝<span>ToDo</span></button>
+  <button style="flex:1" onclick="openServiceHistory()">🔧 Servicehistorik</button>
+</div>
 </div>
 </section>
+
+
+<section id="servicehistory" class="screen">
+  <div class="card">
+    <div class="row between">
+      <b>🔧 Servicehistorik</b>
+      <button onclick="show('home')">Tillbaka</button>
+    </div>
+    <p class="muted">Registrera när Twin och mjölkslang har bytts på gårdarna.</p>
+
+    <label class="muted">Sök gård</label>
+    <input id="serviceSearch" placeholder="Sök gård…" oninput="renderServiceHistory()">
+
+    <div class="row" style="margin-top:10px">
+      <button class="green" style="flex:1" onclick="openServiceForm()">＋ Ny registrering</button>
+      <button style="flex:1" onclick="syncServiceHistory(true)">↻ Uppdatera</button>
+    </div>
+  </div>
+  <div id="serviceHistoryList"></div>
+</section>
+
+<div id="serviceModal" style="display:none;position:fixed;inset:0;background:#0009;z-index:125;padding:16px;overflow:auto">
+  <div style="max-width:560px;margin:3vh auto;background:#fff;border-radius:16px;padding:16px">
+    <div class="row between">
+      <b id="serviceModalTitle">Ny servicepost</b>
+      <button onclick="closeServiceForm()">✕</button>
+    </div>
+
+    <label class="muted">Gård</label>
+    <input id="serviceFarm" placeholder="T.ex. Pilgårds">
+
+    <label class="muted">Robot / anläggning</label>
+    <input id="serviceRobot" placeholder="T.ex. Robot 1 (valfritt)">
+
+    <label class="muted" style="display:block;margin-top:10px">Vad har bytts?</label>
+    <label style="display:flex;gap:10px;align-items:center;margin-top:8px">
+      <input id="serviceTwin" type="checkbox"> Twin
+    </label>
+    <label style="display:flex;gap:10px;align-items:center;margin-top:8px">
+      <input id="serviceMilkHose" type="checkbox"> Mjölkslang
+    </label>
+
+    <label class="muted" style="display:block;margin-top:10px">Datum</label>
+    <input id="serviceDate" type="date">
+
+    <label class="muted">Kommentar (valfritt)</label>
+    <textarea id="serviceComment" rows="3" placeholder="Anteckning…"></textarea>
+
+    <button class="green" style="width:100%;margin-top:14px" onclick="saveServiceHistory()">Spara</button>
+  </div>
+</div>
 
 <section id="inbound" class="screen">
 <div class="card">
@@ -1844,6 +1899,87 @@ async function setTodoActive(id){
 </script>
 
 <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+
+<script>
+// ===== v34.7 Servicehistorik =====
+let serviceHistoryRows=[];
+let serviceEditId=null;
+
+function serviceToday(){
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function openServiceHistory(){show('servicehistory');syncServiceHistory()}
+async function syncServiceHistory(showToast=false){
+  const list=document.getElementById('serviceHistoryList');
+  try{
+    if(!sbConnected){if(list)list.innerHTML='<div class="card"><b>Anslut Supabase först.</b></div>';return}
+    serviceHistoryRows=await sbAll('service_history','*');
+    serviceHistoryRows.sort((a,b)=>String(b.service_date||'').localeCompare(String(a.service_date||''))||String(b.created_at||'').localeCompare(String(a.created_at||'')));
+    renderServiceHistory();
+    if(showToast)toastMsg('Servicehistoriken uppdaterad');
+  }catch(e){
+    if(list)list.innerHTML='<div class="card"><b>Servicehistorik-tabellen saknas.</b><p class="muted">Kör SQL-koden för v34.7 i Supabase en gång.</p></div>';
+    console.error('Service history sync',e);
+  }
+}
+function serviceTypeText(x){
+  const a=[];if(x.twin_replaced)a.push('Twin');if(x.milk_hose_replaced)a.push('Mjölkslang');return a.join(' + ')||'Ej angivet';
+}
+function formatServiceDate(v){
+  const p=String(v||'').split('-');return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:String(v||'');
+}
+function daysSinceService(v){
+  if(!v)return '';
+  const d=new Date(v+'T12:00:00'),now=new Date(),days=Math.floor((now-d)/86400000);
+  if(!Number.isFinite(days)||days<0)return '';
+  if(days===0)return 'idag';if(days===1)return '1 dag sedan';if(days<31)return `${days} dagar sedan`;
+  const months=Math.floor(days/30.44);if(months<12)return `${months} mån sedan`;
+  const years=Math.floor(months/12),rest=months%12;return rest?`${years} år ${rest} mån sedan`:`${years} år sedan`;
+}
+function renderServiceHistory(){
+  const list=document.getElementById('serviceHistoryList');if(!list)return;
+  const q=(document.getElementById('serviceSearch')?.value||'').trim().toLowerCase();
+  const rows=serviceHistoryRows.filter(x=>!q||[x.farm,x.robot,x.comment,serviceTypeText(x)].some(v=>String(v||'').toLowerCase().includes(q)));
+  if(!rows.length){list.innerHTML='<div class="card"><b>Ingen servicehistorik hittades.</b></div>';return}
+  const groups={};for(const x of rows){const farm=(x.farm||'Utan gård').trim()||'Utan gård';(groups[farm]||(groups[farm]=[])).push(x)}
+  list.innerHTML=Object.entries(groups).sort((a,b)=>a[0].localeCompare(b[0],'sv')).map(([farm,items])=>`<div class="card">
+    <div class="row between"><b>🏠 ${esc(farm)}</b><span class="muted">${items.length} ${items.length===1?'post':'poster'}</span></div>
+    ${items.map(x=>`<div style="padding:10px 0;border-top:1px solid #e4e4e4">
+      <div class="row between"><b>${esc(serviceTypeText(x))}</b><b>${esc(formatServiceDate(x.service_date||''))}</b></div>
+      ${x.robot?`<div class="muted" style="margin-top:4px">🤖 ${esc(x.robot)}</div>`:''}
+      <div class="muted" style="margin-top:4px">${esc(daysSinceService(x.service_date||''))}</div>
+      ${x.comment?`<p style="margin:6px 0">${esc(x.comment)}</p>`:''}
+      <div class="row" style="margin-top:8px"><button onclick="editServiceHistory(${JSON.stringify(x.id)})">Ändra</button><button onclick="deleteServiceHistory(${JSON.stringify(x.id)})">Ta bort</button></div>
+    </div>`).join('')}
+  </div>`).join('');
+}
+function openServiceForm(x=null){
+  serviceEditId=x?.id||null;serviceModalTitle.textContent=x?'Ändra servicepost':'Ny servicepost';
+  serviceFarm.value=x?.farm||'';serviceRobot.value=x?.robot||'';serviceTwin.checked=!!x?.twin_replaced;serviceMilkHose.checked=!!x?.milk_hose_replaced;
+  serviceDate.value=x?.service_date||serviceToday();serviceComment.value=x?.comment||'';serviceModal.style.display='block';
+}
+function closeServiceForm(){serviceModal.style.display='none';serviceEditId=null}
+function editServiceHistory(id){const x=serviceHistoryRows.find(r=>String(r.id)===String(id));if(x)openServiceForm(x)}
+async function saveServiceHistory(){
+  const farm=serviceFarm.value.trim(),twin=serviceTwin.checked,hose=serviceMilkHose.checked,date=serviceDate.value;
+  if(!farm){toastMsg('Fyll i gård');serviceFarm.focus();return}
+  if(!twin&&!hose){toastMsg('Välj Twin och/eller mjölkslang');return}
+  if(!date){toastMsg('Välj datum');return}
+  const row={farm,robot:serviceRobot.value.trim(),twin_replaced:twin,milk_hose_replaced:hose,service_date:date,comment:serviceComment.value.trim()};
+  try{
+    if(serviceEditId)await sbFetch('service_history?id=eq.'+encodeURIComponent(serviceEditId),{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify(row)});
+    else await sbFetch('service_history',{method:'POST',headers:{Prefer:'return=minimal'},body:JSON.stringify(row)});
+    closeServiceForm();await syncServiceHistory();toastMsg('Servicehistoriken sparad');
+  }catch(e){toastMsg('Kunde inte spara servicehistoriken');console.error(e)}
+}
+async function deleteServiceHistory(id){
+  if(!confirm('Ta bort den här serviceposten?'))return;
+  try{await sbFetch('service_history?id=eq.'+encodeURIComponent(id),{method:'DELETE'});await syncServiceHistory();toastMsg('Serviceposten borttagen')}
+  catch(e){toastMsg('Kunde inte ta bort serviceposten');console.error(e)}
+}
+</script>
+
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script>
 // ===== v33.1 Inleverans / Ofördelat ovanpå stabil v32.9 =====
