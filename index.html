@@ -91,7 +91,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v34.9 lagerlistor med tydligt val för nollsaldo -->
+<!-- v35.0 lagerlistor med utskrift och Excel-export -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -157,9 +157,10 @@ nav{z-index:30}
     <option value="zero">Endast artiklar med saldo 0</option>
   </select>
 
-  <div class="row" style="margin-top:10px">
-    <button class="green" style="flex:1" onclick="renderStockList()">↻ Uppdatera</button>
-    <button style="flex:1" onclick="printStockList()">🖨️ Skriv ut</button>
+  <div class="row" style="margin-top:10px;flex-wrap:wrap">
+    <button class="green" style="flex:1;min-width:130px" onclick="renderStockList()">↻ Uppdatera</button>
+    <button style="flex:1;min-width:130px" onclick="printStockList()">🖨️ Skriv ut</button>
+    <button class="primary" style="flex:1;min-width:130px" onclick="exportStockListExcel()">📊 Excel</button>
   </div>
 </div>
 <div class="card">
@@ -570,6 +571,35 @@ function renderStockList(){
     </div>`;
   }).join(""):'<p class="muted">Inga artiklar hittades på vald lagerplats.</p>';
 }
+function exportStockListExcel(){
+  const p=document.getElementById("stockListPlace")?.value||selected;
+  const rows=stockListRows();
+  const filter=document.getElementById("stockListFilter")?.value||"positive";
+  const filterText=filter==="positive"?"Endast saldo över 0":filter==="zero"?"Endast saldo 0":"Alla artiklar, även saldo 0";
+  if(typeof XLSX==="undefined"){toastMsg("Excel-funktionen kunde inte laddas");return}
+  if(!rows.length){toastMsg("Listan är tom");return}
+
+  const data=rows.map(x=>{
+    const l=x.locations?.[p]||{place:""};
+    return {
+      "Artikelnummer": String(x.id||""),
+      "Benämning": String(x.name||""),
+      "Plats / hyllplats": String(l.place||""),
+      "Saldo": Number(displayQty(x,p))||0
+    };
+  });
+
+  const ws=XLSX.utils.json_to_sheet(data,{header:["Artikelnummer","Benämning","Plats / hyllplats","Saldo"]});
+  ws["!cols"]=[{wch:24},{wch:42},{wch:20},{wch:10}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Lagerlista");
+
+  const safeName=String(names[p]||p).replace(/[\\/:*?\[\]]/g,"-");
+  const date=new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb,`Lager Gotland - ${safeName} - ${date}.xlsx`);
+  toastMsg(`Excel skapad: ${rows.length} artiklar • ${filterText}`);
+}
+
 function printStockList(){
   const p=document.getElementById("stockListPlace")?.value||selected;
   const rows=stockListRows();
