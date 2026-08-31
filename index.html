@@ -91,7 +91,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v34.8 utskrivbara lagerlistor per lagerplats -->
+<!-- v34.9 lagerlistor med tydligt val för nollsaldo -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -150,10 +150,12 @@ nav{z-index:30}
     <option value="kemi">Kemi/Övrigt</option>
   </select>
 
-  <label style="display:flex;align-items:center;gap:10px;margin-top:10px">
-    <input id="stockListOnlyPositive" type="checkbox" checked onchange="renderStockList()">
-    Visa endast artiklar med saldo över 0
-  </label>
+  <label class="muted" style="display:block;margin-top:10px">Vilka artiklar ska visas?</label>
+  <select id="stockListFilter" onchange="renderStockList()">
+    <option value="positive">Endast artiklar med saldo över 0</option>
+    <option value="all">Alla artiklar – även saldo 0</option>
+    <option value="zero">Endast artiklar med saldo 0</option>
+  </select>
 
   <div class="row" style="margin-top:10px">
     <button class="green" style="flex:1" onclick="renderStockList()">↻ Uppdatera</button>
@@ -532,12 +534,12 @@ function renderHome(){renderPlaces();let s=stat();placeTitle.textContent=names[s
 
 function stockListRows(){
   const p=document.getElementById("stockListPlace")?.value||selected;
-  const positive=document.getElementById("stockListOnlyPositive")?.checked!==false;
+  const filter=document.getElementById("stockListFilter")?.value||"positive";
   return allData().filter(x=>{
-    const l=x.locations?.[p]||{qty:"",place:""};
     const q=Number(displayQty(x,p))||0;
-    const belongs=(l.qty!==""||l.place!==""||q>0);
-    return belongs && (!positive || q>0);
+    if(filter==="positive") return q>0;
+    if(filter==="zero") return q===0;
+    return true;
   }).sort((a,b)=>{
     const ap=String(a.locations?.[p]?.place||"");
     const bp=String(b.locations?.[p]?.place||"");
@@ -571,7 +573,8 @@ function renderStockList(){
 function printStockList(){
   const p=document.getElementById("stockListPlace")?.value||selected;
   const rows=stockListRows();
-  const onlyPositive=document.getElementById("stockListOnlyPositive")?.checked!==false;
+  const filter=document.getElementById("stockListFilter")?.value||"positive";
+  const filterText=filter==="positive"?"Endast saldo över 0":filter==="zero"?"Endast saldo 0":"Alla artiklar, även saldo 0";
   const body=rows.map(x=>{
     const l=x.locations?.[p]||{place:""};
     return `<tr><td>${esc(x.id)}</td><td>${esc(x.name)}</td><td>${esc(l.place||"")}</td><td class="qty">${esc(displayQty(x,p))}</td></tr>`;
@@ -594,7 +597,7 @@ function printStockList(){
     @media print{button{display:none}}
   </style></head><body>
   <h1>Lager Gotland – ${esc(names[p])}</h1>
-  <p>${rows.length} artiklar • ${onlyPositive?"Endast saldo över 0":"Alla registrerade artiklar"} • Utskriven ${esc(stamp)}</p>
+  <p>${rows.length} artiklar • ${esc(filterText)} • Utskriven ${esc(stamp)}</p>
   <table><thead><tr><th>Artikelnummer</th><th>Benämning</th><th>Plats</th><th class="qty">Saldo</th></tr></thead><tbody>${body}</tbody></table>
   <script>window.onload=()=>window.print()<\/script></body></html>`);
   w.document.close();
