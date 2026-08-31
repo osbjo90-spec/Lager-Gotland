@@ -91,7 +91,7 @@ nav{z-index:30}
 </head>
 <body>
 <header>Lager Gotland</header>
-<!-- v34.7 servicehistorik för Twin och mjölkslang -->
+<!-- v34.8 utskrivbara lagerlistor per lagerplats -->
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
@@ -128,11 +128,43 @@ nav{z-index:30}
   <button style="flex:1" onclick="openTodos()">📝<span>ToDo</span></button>
   <button style="flex:1" onclick="openServiceHistory()">🔧 Servicehistorik</button>
   <button style="flex:1" onclick="openCompareStock()">📋 Jämför lager</button>
+  <button style="flex:1" onclick="openStockLists()">🖨️ Lagerlistor</button>
 </div>
 </div>
 </section>
 
 
+
+
+<section id="stocklists" class="screen">
+<div class="card">
+  <div class="row between"><b>🖨️ Lagerlistor</b><button onclick="show('home')">Tillbaka</button></div>
+  <p class="muted">Välj lagerplats och skriv ut en aktuell lagerlista.</p>
+
+  <label class="muted">Lagerplats</label>
+  <select id="stockListPlace" onchange="renderStockList()">
+    <option value="jimmy">Jimmys bil</option>
+    <option value="oskar">Oskars bil</option>
+    <option value="jonathan">Jonathans bil</option>
+    <option value="lager">Lagret</option>
+    <option value="kemi">Kemi/Övrigt</option>
+  </select>
+
+  <label style="display:flex;align-items:center;gap:10px;margin-top:10px">
+    <input id="stockListOnlyPositive" type="checkbox" checked onchange="renderStockList()">
+    Visa endast artiklar med saldo över 0
+  </label>
+
+  <div class="row" style="margin-top:10px">
+    <button class="green" style="flex:1" onclick="renderStockList()">↻ Uppdatera</button>
+    <button style="flex:1" onclick="printStockList()">🖨️ Skriv ut</button>
+  </div>
+</div>
+<div class="card">
+  <div class="row between"><b id="stockListTitle">Lagerlista</b><span id="stockListCount" class="muted"></span></div>
+  <div id="stockListRows"></div>
+</div>
+</section>
 
 <section id="comparestock" class="screen">
 <div class="card">
@@ -497,6 +529,77 @@ if(currentFileName && externalData){setTimeout(()=>{if(document.getElementById("
 }
 function stat(){let a=rel(),dn=a.filter(x=>inv[key(x)]?.done).length;return{t:a.length,d:dn,l:a.length-dn,p:a.length?Math.round(dn/a.length*100):0}}
 function renderHome(){renderPlaces();let s=stat();placeTitle.textContent=names[selected];pct.textContent=s.p+" %";bar.style.width=s.p+"%";done.textContent=s.d;leftN.textContent=s.l;total.textContent=s.t;if(typeof renderPlaceArticles==="function")renderPlaceArticles()}
+
+function stockListRows(){
+  const p=document.getElementById("stockListPlace")?.value||selected;
+  const positive=document.getElementById("stockListOnlyPositive")?.checked!==false;
+  return allData().filter(x=>{
+    const l=x.locations?.[p]||{qty:"",place:""};
+    const q=Number(displayQty(x,p))||0;
+    const belongs=(l.qty!==""||l.place!==""||q>0);
+    return belongs && (!positive || q>0);
+  }).sort((a,b)=>{
+    const ap=String(a.locations?.[p]?.place||"");
+    const bp=String(b.locations?.[p]?.place||"");
+    return ap.localeCompare(bp,"sv",{numeric:true}) || String(a.id).localeCompare(String(b.id),"sv",{numeric:true});
+  });
+}
+function openStockLists(){
+  show("stocklists");
+  const sel=document.getElementById("stockListPlace");
+  if(sel)sel.value=selected;
+  renderStockList();
+}
+function renderStockList(){
+  const p=document.getElementById("stockListPlace")?.value||selected;
+  const rows=stockListRows();
+  const title=document.getElementById("stockListTitle");
+  const count=document.getElementById("stockListCount");
+  const el=document.getElementById("stockListRows");
+  if(title)title.textContent=names[p]||p;
+  if(count)count.textContent=rows.length+" artiklar";
+  if(!el)return;
+  el.innerHTML=rows.length?rows.map(x=>{
+    const l=x.locations?.[p]||{place:""};
+    return `<div class="item">
+      <div class="row between"><b>${esc(x.id)}</b><b>${esc(displayQty(x,p))} st</b></div>
+      <div>${esc(x.name)}</div>
+      ${l.place?`<div class="muted">Plats: ${esc(l.place)}</div>`:""}
+    </div>`;
+  }).join(""):'<p class="muted">Inga artiklar hittades på vald lagerplats.</p>';
+}
+function printStockList(){
+  const p=document.getElementById("stockListPlace")?.value||selected;
+  const rows=stockListRows();
+  const onlyPositive=document.getElementById("stockListOnlyPositive")?.checked!==false;
+  const body=rows.map(x=>{
+    const l=x.locations?.[p]||{place:""};
+    return `<tr><td>${esc(x.id)}</td><td>${esc(x.name)}</td><td>${esc(l.place||"")}</td><td class="qty">${esc(displayQty(x,p))}</td></tr>`;
+  }).join("");
+  const now=new Date();
+  const stamp=now.toLocaleDateString("sv-SE");
+  const w=window.open("","_blank");
+  if(!w){toastMsg("Tillåt popup för utskrift");return}
+  w.document.write(`<!doctype html><html lang="sv"><head><meta charset="utf-8"><title>${esc(names[p])} – Lagerlista</title>
+  <style>
+    @page{size:A4;margin:12mm}
+    body{font-family:Arial,sans-serif;color:#111;margin:0}
+    h1{font-size:20px;margin:0 0 4px}
+    p{font-size:11px;color:#555;margin:0 0 12px}
+    table{width:100%;border-collapse:collapse;font-size:10.5px}
+    th,td{border-bottom:1px solid #ccc;padding:5px 6px;text-align:left;vertical-align:top}
+    th{background:#eee;font-size:10px}
+    .qty{text-align:right;font-weight:bold;width:55px}
+    th:nth-child(1){width:25%} th:nth-child(3){width:18%}
+    @media print{button{display:none}}
+  </style></head><body>
+  <h1>Lager Gotland – ${esc(names[p])}</h1>
+  <p>${rows.length} artiklar • ${onlyPositive?"Endast saldo över 0":"Alla registrerade artiklar"} • Utskriven ${esc(stamp)}</p>
+  <table><thead><tr><th>Artikelnummer</th><th>Benämning</th><th>Plats</th><th class="qty">Saldo</th></tr></thead><tbody>${body}</tbody></table>
+  <script>window.onload=()=>window.print()<\/script></body></html>`);
+  w.document.close();
+}
+
 function compareStockRows(){
  return allData().filter(x=>{
    const j=Number(displayQty(x,"jonathan"))||0, o=Number(displayQty(x,"oskar"))||0, m=Number(displayQty(x,"jimmy"))||0;
@@ -515,7 +618,7 @@ function printCompareStock(){
  const w=window.open("","_blank"); if(!w){toastMsg("Tillåt popup för utskrift");return}
  w.document.write(`<!doctype html><html lang="sv"><head><meta charset="utf-8"><title>Lagerjämförelse</title><style>body{font-family:Arial;margin:24px;color:#111}h1{font-size:22px}p{color:#555}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid #ccc;padding:7px;text-align:left}th{background:#eee}@media print{button{display:none}}</style></head><body><h1>Lager Gotland – delar Jonathan saknar</h1><p>${rows.length} artiklar • Oskar/Jimmy har saldo över 0</p><table><thead><tr><th>Artikelnummer</th><th>Benämning</th><th>Oskar</th><th>Jimmy</th></tr></thead><tbody>${body}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`); w.document.close();
 }
-function show(id){document.querySelectorAll(".screen").forEach(x=>x.classList.remove("active"));document.getElementById(id).classList.add("active");document.querySelectorAll("nav button").forEach(x=>x.classList.remove("activeNav"));let n=document.getElementById("n-"+id);if(n)n.classList.add("activeNav");if(id==="home")renderHome();if(id==="search")renderSearch();if(id==="left")renderLeft();if(id==="newpart"){newPartLocation.value=selected}if(id==="cloud")loadCloudSettings();if(id==="comparestock")renderCompareStock()}
+function show(id){document.querySelectorAll(".screen").forEach(x=>x.classList.remove("active"));document.getElementById(id).classList.add("active");document.querySelectorAll("nav button").forEach(x=>x.classList.remove("activeNav"));let n=document.getElementById("n-"+id);if(n)n.classList.add("activeNav");if(id==="home")renderHome();if(id==="search")renderSearch();if(id==="left")renderLeft();if(id==="newpart"){newPartLocation.value=selected}if(id==="cloud")loadCloudSettings();if(id==="comparestock")renderCompareStock();if(id==="stocklists")renderStockList()}
 function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
 function displayQty(x,p){
   let l=x.locations[p]||{qty:"",place:""}, s=inv[p+"|"+x.id];
