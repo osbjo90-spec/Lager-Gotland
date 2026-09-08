@@ -85,7 +85,7 @@ nav{z-index:30}
 }
 
 
-/* v35.1 – meny högst upp och inventeringslista dold */
+/* v35.2 – meny högst upp, inventeringslista och inventeringsstatus dolda */
 .topnav{position:sticky;top:58px;left:auto;right:auto;bottom:auto;z-index:25;max-width:760px;margin:0 auto;background:#fff;border-top:0;border-bottom:1px solid var(--line);box-shadow:0 2px 6px #0001;display:grid;grid-template-columns:repeat(6,1fr);padding:4px 8px}
 .topnav button{background:white;border-radius:10px;color:#53626d;padding:7px 2px;font-size:10px;min-height:54px}
 .topnav .ni{font-size:20px}
@@ -118,12 +118,15 @@ nav{z-index:30}
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
-<div class="card">
-<div class="row between"><b>Inventeringsstatus 2026 – <span id="placeTitle"></span></b><span id="pct">0 %</span></div>
-<div class="progress"><div id="bar"></div></div>
-<div class="stat"><span>✅ Klart</span><b id="done">0</b></div>
-<div class="stat"><span>🟠 Ej inventerade</span><b id="leftN">0</b></div>
-<div class="stat"><span>📦 Totalt</span><b id="total">0</b></div>
+<button class="inventory-toggle" onclick="toggleInventoryStatus()">
+  <span><b>📊 Inventeringsstatus 2026 – <span id="placeTitle"></span></b><br><span class="muted"><span id="pct">0 %</span> klart</span></span>
+  <span id="inventoryStatusToggleIcon">Visa ▾</span>
+</button>
+<div class="card" id="inventoryStatusCard" style="display:none">
+  <div class="progress"><div id="bar"></div></div>
+  <div class="stat"><span>✅ Klart</span><b id="done">0</b></div>
+  <div class="stat"><span>🟠 Ej inventerade</span><b id="leftN">0</b></div>
+  <div class="stat"><span>📦 Totalt</span><b id="total">0</b></div>
 </div>
 <button class="inventory-toggle" onclick="toggleInventoryList()">
   <span><b>📋 Inventeringslista – <span id="articlePlaceTitle"></span></b><br><span class="muted" id="articleCount">0 artiklar</span></span>
@@ -534,6 +537,15 @@ function allData(){
 function rel(p=selected){return allData().filter(x=>{let a=x.locations[p];return a && (a.qty!==""||a.place!=="")})}
 function key(x){return selected+"|"+x.id}
 function placeCounts(){let o={};Object.keys(names).forEach(p=>o[p]=rel(p).length);return o}
+function toggleInventoryStatus(){
+  const card=document.getElementById("inventoryStatusCard");
+  const icon=document.getElementById("inventoryStatusToggleIcon");
+  if(!card)return;
+  const open=card.style.display==="none" || !card.style.display;
+  card.style.display=open?"block":"none";
+  if(icon)icon.textContent=open?"Dölj ▴":"Visa ▾";
+}
+
 function toggleInventoryList(){
  const card=document.getElementById("inventoryListCard");
  const icon=document.getElementById("inventoryToggleIcon");
