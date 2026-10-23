@@ -118,6 +118,14 @@ nav{z-index:30}
 <main>
 <section id="home" class="screen active">
 <div class="card"><b>Välj plats / lager</b><div id="places" class="grid"></div></div>
+<div class="card" id="homeTodoCard">
+  <div class="row between" style="gap:8px;flex-wrap:wrap">
+    <b>📝 Aktiva ToDo <span id="homeTodoBadge" style="color:#c62828">–</span></b>
+    <button class="primary" onclick="openTodos()">Visa alla →</button>
+  </div>
+  <div id="homeTodoSummary" class="muted" style="margin-top:9px">Hämtar aktuella jobb…</div>
+  <div id="homeTodoRecent" style="margin-top:8px"></div>
+</div>
 <button class="inventory-toggle" onclick="toggleInventoryStatus()">
   <span><b>📊 Inventeringsstatus 2026 – <span id="placeTitle"></span></b><br><span class="muted"><span id="pct">0 %</span> klart</span></span>
   <span id="inventoryStatusToggleIcon">Visa ▾</span>
@@ -686,7 +694,7 @@ function printCompareStock(){
  const w=window.open("","_blank"); if(!w){toastMsg("Tillåt popup för utskrift");return}
  w.document.write(`<!doctype html><html lang="sv"><head><meta charset="utf-8"><title>Lagerjämförelse</title><style>body{font-family:Arial;margin:24px;color:#111}h1{font-size:22px}p{color:#555}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid #ccc;padding:7px;text-align:left}th{background:#eee}@media print{button{display:none}}</style></head><body><h1>Lager Gotland – delar Jonathan saknar</h1><p>${rows.length} artiklar • Oskar/Jimmy har saldo över 0</p><table><thead><tr><th>Artikelnummer</th><th>Benämning</th><th>Oskar</th><th>Jimmy</th></tr></thead><tbody>${body}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`); w.document.close();
 }
-function show(id){document.querySelectorAll(".screen").forEach(x=>x.classList.remove("active"));document.getElementById(id).classList.add("active");document.querySelectorAll("nav button").forEach(x=>x.classList.remove("activeNav"));let n=document.getElementById("n-"+id);if(n)n.classList.add("activeNav");if(id==="home")renderHome();if(id==="search")renderSearch();if(id==="left")renderLeft();if(id==="newpart"){newPartLocation.value=selected}if(id==="cloud")loadCloudSettings();if(id==="comparestock")renderCompareStock();if(id==="stocklists")renderStockList()}
+function show(id){document.querySelectorAll(".screen").forEach(x=>x.classList.remove("active"));document.getElementById(id).classList.add("active");document.querySelectorAll("nav button").forEach(x=>x.classList.remove("activeNav"));let n=document.getElementById("n-"+id);if(n)n.classList.add("activeNav");if(id==="home"){renderHome();if(typeof renderHomeTodo==='function')renderHomeTodo();}if(id==="search")renderSearch();if(id==="left")renderLeft();if(id==="newpart"){newPartLocation.value=selected}if(id==="cloud")loadCloudSettings();if(id==="comparestock")renderCompareStock();if(id==="stocklists")renderStockList()}
 function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
 function displayQty(x,p){
   let l=x.locations[p]||{qty:"",place:""}, s=inv[p+"|"+x.id];
@@ -1965,10 +1973,25 @@ async function syncTodos(){
     if(!sbConnected)return;
     todos=await sbAll('todo_jobs','*');
     todos.sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));
-    renderTodos();updateTodoBadge();
+    renderTodos();updateTodoBadge();renderHomeTodo();
   }catch(e){console.error('Todo sync',e)}
 }
 function openTodos(){show('todo');syncTodos()}
+function renderHomeTodo(){
+ const badge=document.getElementById('homeTodoBadge');
+ const summary=document.getElementById('homeTodoSummary');
+ const recent=document.getElementById('homeTodoRecent');
+ if(!badge||!summary||!recent)return;
+ const active=todos.filter(x=>x.status!=='Klar');
+ const high=active.filter(x=>String(x.priority||'').toLowerCase()==='hög').length;
+ const order=active.filter(x=>x.needs_part&&getTodoParts(x).some(p=>p.status==='Behöver beställas')).length;
+ badge.textContent=active.length?'('+active.length+')':'(0)';
+ summary.textContent=active.length+' aktiva jobb • '+high+' hög prioritet • '+order+' med delar att beställa';
+ recent.innerHTML=active.slice(0,3).map(x=>`<div style="padding:9px 0;border-top:1px solid #e5e9ed">
+   <b>${esc(x.customer||'Utan gård')}</b> – ${esc(x.job_type||'Jobb')}
+   <div class="muted">${x.assigned_to?'👤 '+esc(x.assigned_to)+' • ':''}${x.priority==='Hög'?'🔴 Hög prioritet':'🟠 Aktivt'}</div>
+ </div>`).join('') || '<div style="padding:8px 0;color:#179447">✅ Inga aktiva jobb</div>';
+}
 function updateTodoBadge(){
   const n=todos.filter(x=>x.status!=='Klar').length;
   const el=document.getElementById('todoNavBadge');
