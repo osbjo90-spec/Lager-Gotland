@@ -664,30 +664,7 @@ function printStockList(){
   <h1>Lager Gotland – ${esc(names[p])}</h1>
   <p>${rows.length} artiklar • ${esc(filterText)} • Utskriven ${esc(stamp)}</p>
   <table><thead><tr><th>Artikelnummer</th><th>Benämning</th><th>Plats</th><th class="qty">Saldo</th></tr></thead><tbody>${body}</tbody></table>
-  <script>window.onload=()=>window.print()<\/script>
-<script>
-(function(){
- const busy=new WeakSet();
- window.withSaveGuard=async function(task){
-   const btn=document.activeElement&&document.activeElement.closest?document.activeElement.closest('button'):null;
-   if(btn&&busy.has(btn))return;
-   const old=btn?btn.innerHTML:'';
-   try{
-     if(btn){busy.add(btn);btn.disabled=true;btn.innerHTML='⏳ Sparar…';}
-     const r=await task();
-     if(btn){btn.innerHTML='✓ Sparat';await new Promise(x=>setTimeout(x,400));}
-     return r;
-   }catch(e){
-     if(btn){btn.innerHTML='⚠ Försök igen';await new Promise(x=>setTimeout(x,800));}
-     throw e;
-   }finally{
-     if(btn){btn.innerHTML=old;btn.disabled=false;busy.delete(btn);}
-   }
- };
-})();
-</script>
-
-</body></html>`);
+  <script>window.onload=()=>window.print()<\/script></body></html>`);
   w.document.close();
 }
 
@@ -707,30 +684,7 @@ function printCompareStock(){
  const rows=compareStockRows();
  const body=rows.map(x=>`<tr><td>${esc(x.id)}</td><td>${esc(x.name)}</td><td>${esc(displayQty(x,"oskar"))}</td><td>${esc(displayQty(x,"jimmy"))}</td></tr>`).join("");
  const w=window.open("","_blank"); if(!w){toastMsg("Tillåt popup för utskrift");return}
- w.document.write(`<!doctype html><html lang="sv"><head><meta charset="utf-8"><title>Lagerjämförelse</title><style>body{font-family:Arial;margin:24px;color:#111}h1{font-size:22px}p{color:#555}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid #ccc;padding:7px;text-align:left}th{background:#eee}@media print{button{display:none}}</style></head><body><h1>Lager Gotland – delar Jonathan saknar</h1><p>${rows.length} artiklar • Oskar/Jimmy har saldo över 0</p><table><thead><tr><th>Artikelnummer</th><th>Benämning</th><th>Oskar</th><th>Jimmy</th></tr></thead><tbody>${body}</tbody></table><script>window.onload=()=>window.print()<\/script>
-<script>
-(function(){
- const busy=new WeakSet();
- window.withSaveGuard=async function(task){
-   const btn=document.activeElement&&document.activeElement.closest?document.activeElement.closest('button'):null;
-   if(btn&&busy.has(btn))return;
-   const old=btn?btn.innerHTML:'';
-   try{
-     if(btn){busy.add(btn);btn.disabled=true;btn.innerHTML='⏳ Sparar…';}
-     const r=await task();
-     if(btn){btn.innerHTML='✓ Sparat';await new Promise(x=>setTimeout(x,400));}
-     return r;
-   }catch(e){
-     if(btn){btn.innerHTML='⚠ Försök igen';await new Promise(x=>setTimeout(x,800));}
-     throw e;
-   }finally{
-     if(btn){btn.innerHTML=old;btn.disabled=false;busy.delete(btn);}
-   }
- };
-})();
-</script>
-
-</body></html>`); w.document.close();
+ w.document.write(`<!doctype html><html lang="sv"><head><meta charset="utf-8"><title>Lagerjämförelse</title><style>body{font-family:Arial;margin:24px;color:#111}h1{font-size:22px}p{color:#555}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid #ccc;padding:7px;text-align:left}th{background:#eee}@media print{button{display:none}}</style></head><body><h1>Lager Gotland – delar Jonathan saknar</h1><p>${rows.length} artiklar • Oskar/Jimmy har saldo över 0</p><table><thead><tr><th>Artikelnummer</th><th>Benämning</th><th>Oskar</th><th>Jimmy</th></tr></thead><tbody>${body}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`); w.document.close();
 }
 function show(id){document.querySelectorAll(".screen").forEach(x=>x.classList.remove("active"));document.getElementById(id).classList.add("active");document.querySelectorAll("nav button").forEach(x=>x.classList.remove("activeNav"));let n=document.getElementById("n-"+id);if(n)n.classList.add("activeNav");if(id==="home")renderHome();if(id==="search")renderSearch();if(id==="left")renderLeft();if(id==="newpart"){newPartLocation.value=selected}if(id==="cloud")loadCloudSettings();if(id==="comparestock")renderCompareStock();if(id==="stocklists")renderStockList()}
 function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
@@ -2092,19 +2046,25 @@ function closeTodoForm(){todoModal.style.display='none';scannerTarget='search'}
 function toggleTodoPart(){todoPartFields.style.display=todoNeedsPart.checked?'block':'none';if(todoNeedsPart.checked&&!todoPartsDraft.length)addTodoPart()}
 function startTodoScanner(i=0){todoScanPartIndex=i;scannerTarget='todo';startScanner()}
 function editTodo(id){const x=todos.find(t=>String(t.id)===String(id));if(x)openTodoForm(x)}
+const pendingSaveButtons=new WeakSet();
+async function guardedSave(task){
+ const button=document.activeElement?.closest?.('button');
+ if(button&&pendingSaveButtons.has(button))return;
+ const old=button?.innerHTML;
+ if(button){pendingSaveButtons.add(button);button.disabled=true;button.textContent='⏳ Sparar…';}
+ try{const result=await task();if(button)button.textContent='✓ Sparat';return result;}
+ catch(e){if(button)button.textContent='⚠ Kunde inte spara';throw e;}
+ finally{if(button)setTimeout(()=>{button.disabled=false;button.innerHTML=old;pendingSaveButtons.delete(button)},700);}
+}
 async function saveTodo(){
-  return withSaveGuard(async()=>{
-
   const parts=todoNeedsPart.checked?collectTodoParts():[];
   const first=parts[0]||{article_no:'',part_name:'',qty:1,status:''};
   const row={customer:todoCustomer.value.trim(),job_type:todoType.value.trim(),description:todoText.value.trim(),priority:todoPriority.value,assigned_to:todoAssignee.value,status:'Aktiv',needs_part:parts.length>0,article_no:first.article_no,part_name:first.part_name,part_qty:first.qty,part_status:first.status,parts};
   try{
-    if(todoEditId){const old=todos.find(t=>String(t.id)===String(todoEditId));if(old?.status)row.status=old.status;await sbFetch('todo_jobs?id=eq.'+encodeURIComponent(todoEditId),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify(row)})}
-    else await sbFetch('todo_jobs',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify(row)});
+    if(todoEditId){const old=todos.find(t=>String(t.id)===String(todoEditId));if(old?.status)row.status=old.status;await sbFetch('todo_jobs?id=eq.'+encodeURIComponent(todoEditId),{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify(row)})}
+    else await sbFetch('todo_jobs',{method:'POST',headers:{Prefer:'return=minimal'},body:JSON.stringify(row)});
     closeTodoForm();await syncTodos();toastMsg('Jobbet sparat');
   }catch(e){const msg=String(e?.message||e);if(msg.toLowerCase().includes('parts'))alert('Supabase behöver kolumnen parts. Kör SQL-filen för v34.5 en gång.');toastMsg('Kunde inte spara jobbet');console.error(e)}
-
-  });
 }
 async function setTodoDone(id){
   try{await sbFetch('todo_jobs?id=eq.'+encodeURIComponent(id),{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify({status:'Klar'})});await syncTodos();toastMsg('Jobbet markerat klart')}
@@ -2216,16 +2176,12 @@ async function saveServiceHistory(){
   if(!farm){toastMsg('Fyll i gård');serviceFarm.focus();return}
   if(!twin&&!hose){toastMsg('Välj Twin och/eller mjölkslang');return}
   if(!date){toastMsg('Välj datum');return}
-  
-  return withSaveGuard(async()=>{
-const row={farm,robot:serviceRobot.value.trim(),twin_replaced:twin,milk_hose_replaced:hose,service_date:date,comment:serviceComment.value.trim()};
+  const row={farm,robot:serviceRobot.value.trim(),twin_replaced:twin,milk_hose_replaced:hose,service_date:date,comment:serviceComment.value.trim()};
   try{
-    if(serviceEditId)await sbFetch('service_history?id=eq.'+encodeURIComponent(serviceEditId),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify(row)});
-    else await sbFetch('service_history',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify(row)});
+    if(serviceEditId)await sbFetch('service_history?id=eq.'+encodeURIComponent(serviceEditId),{method:'PATCH',headers:{Prefer:'return=minimal'},body:JSON.stringify(row)});
+    else await sbFetch('service_history',{method:'POST',headers:{Prefer:'return=minimal'},body:JSON.stringify(row)});
     closeServiceForm();await syncServiceHistory();toastMsg('Servicehistoriken sparad');
   }catch(e){toastMsg('Kunde inte spara servicehistoriken');console.error(e)}
-
-  });
 }
 async function deleteServiceHistory(id){
   if(!confirm('Ta bort den här serviceposten?'))return;
@@ -2899,27 +2855,4 @@ async function captureDeliveryPhoto(){
 }
 
 </script>
-
-<script>
-(function(){
- const busy=new WeakSet();
- window.withSaveGuard=async function(task){
-   const btn=document.activeElement&&document.activeElement.closest?document.activeElement.closest('button'):null;
-   if(btn&&busy.has(btn))return;
-   const old=btn?btn.innerHTML:'';
-   try{
-     if(btn){busy.add(btn);btn.disabled=true;btn.innerHTML='⏳ Sparar…';}
-     const r=await task();
-     if(btn){btn.innerHTML='✓ Sparat';await new Promise(x=>setTimeout(x,400));}
-     return r;
-   }catch(e){
-     if(btn){btn.innerHTML='⚠ Försök igen';await new Promise(x=>setTimeout(x,800));}
-     throw e;
-   }finally{
-     if(btn){btn.innerHTML=old;btn.disabled=false;busy.delete(btn);}
-   }
- };
-})();
-</script>
-
 </body></html>
