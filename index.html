@@ -521,7 +521,11 @@ html,body{width:100%;max-width:100%;overflow-x:clip}
 <div style="max-width:520px;margin:8vh auto;background:#fff;border-radius:16px;padding:16px">
 <div class="row between"><b>🔄 Flytta del</b><button onclick="closeTransfer()">✕ Stäng</button></div>
 <p id="transferPart" class="muted"></p>
-<label class="muted">Från</label><select id="transferFrom"></select>
+<label class="muted">Vem gör flytten?</label>
+<select id="transferActor" onchange="localStorage.setItem('lg_actor_v1',this.value)">
+<option value="">Välj person</option><option value="Oskar">Oskar</option><option value="Jimmy">Jimmy</option><option value="Jonathan">Jonathan</option>
+</select>
+<label class="muted" style="display:block;margin-top:10px">Från</label><select id="transferFrom"></select>
 <label class="muted" style="display:block;margin-top:10px">Till</label><select id="transferTo"></select>
 <label class="muted" style="display:block;margin-top:10px">Antal</label><input id="transferQty" type="number" min="1" value="1">
 <button class="green" style="width:100%;margin-top:12px" onclick="doTransfer()">Flytta</button>
@@ -1697,25 +1701,50 @@ function openTransfer(){
   f.value=selected;
   t.value=selected==='lager'?'oskar':'lager';
   transferPart.textContent=current.id+' – '+current.name;
-  transferQty.value=1;transferModal.style.display='block';
+  transferQty.value=1;transferActor.value=localStorage.getItem('lg_actor_v1')||'';transferModal.style.display='block';
 }
 function closeTransfer(){transferModal.style.display='none'}
 async function doTransfer(){
   if(!current)return;
-  const from=transferFrom.value,to=transferTo.value,n=Math.max(1,parseInt(transferQty.value,10)||1);
+  const actor=transferActor.value;
+  if(!actor){toastMsg('Välj vem som gör flytten');return}
+  localStorage.setItem('lg_actor_v1',actor);
+  const from=transferFrom.value,to=transferTo.value,n=parseInt(transferQty.value,10);
+  if(!Number.isSafeInteger(n)||n<1){toastMsg('Ange ett giltigt antal');return}
   if(from===to){toastMsg('Välj två olika lagerställen');return}
+  if(!sbConnected){toastMsg('Anslut till Supabase för lagerflytt');return}
   const fl=current.locations[from]||{qty:'0',place:''},tl=current.locations[to]||{qty:'0',place:''};
   const fq=Math.max(0,parseInt(fl.qty,10)||0),tq=Math.max(0,parseInt(tl.qty,10)||0);
   if(fq<n){toastMsg('Det finns bara '+fq+' st att flytta');return}
+  const button=transferModal.querySelector('button.green');
+  button.disabled=true;button.textContent='Flyttar…';
+  let sourceChanged=false;
   try{
     await setStockV29(current,from,fq-n,fl.place||'');
+    sourceChanged=true;
     await setStockV29(current,to,tq+n,tl.place||'');
+    const entry={at:new Date().toISOString(),actor,article:current.id,name:current.name,from,to,qty:n};
+    try{
+      const history=JSON.parse(localStorage.getItem('lg_transfer_history_v1')||'[]');
+      history.unshift(entry);
+      localStorage.setItem('lg_transfer_history_v1',JSON.stringify(history.slice(0,200)));
+    }catch(logErr){console.warn('Lokal flytthistorik kunde inte sparas',logErr)}
     closeTransfer();
+    await loadSupabase(false);
+    const refreshed=allData().find(x=>x.id===current.id);
+    if(refreshed)current=refreshed;
     detailStocks.innerHTML=stockHTML(current,false);renderAllStockEditors();renderHome();renderSearch();
     if(selected===from){dqty.value=fq-n;dold.textContent=(fq-n)+' st'}
     if(selected===to){dqty.value=tq+n;dold.textContent=(tq+n)+' st'}
-    toastMsg('Flyttade '+n+' st');
-  }catch(e){toastMsg('Kunde inte flytta delen');console.error(e)}
+    toastMsg('Flyttade '+n+' st • '+actor);
+  }catch(e){
+    console.error('Flytt misslyckades',e);
+    if(sourceChanged){
+      try{await setStockV29(current,from,fq,fl.place||'');toastMsg('Flytten avbröts, ursprungligt saldo återställt')}
+      catch(rollbackError){console.error('Återställning misslyckades',rollbackError);alert('VARNING: Flytten misslyckades och saldot kunde inte återställas. Kontrollera båda lagerplatserna manuellt!')}
+    }else toastMsg('Kunde inte flytta delen: '+(e?.message||e));
+    try{await loadSupabase(false)}catch(_){}
+  }finally{button.disabled=false;button.textContent='Flytta'}
 }
 
 
