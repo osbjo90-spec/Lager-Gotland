@@ -170,6 +170,7 @@ html,body{width:100%;max-width:100%;overflow-x:clip}
 <div class="row" style="margin-top:8px">
   <button style="flex:1" onclick="openTodos()">📝<span>ToDo</span></button>
   <button style="flex:1" onclick="openServiceHistory()">🔧 Servicehistorik</button>
+  <button style="flex:1" onclick="openStockHistory()">🕒 Lagerhistorik</button>
   <button style="flex:1" onclick="openCompareStock()">📋 Jämför lager</button>
   <button style="flex:1" onclick="openStockLists()">🖨️ Lagerlistor</button>
 </div>
@@ -178,6 +179,17 @@ html,body{width:100%;max-width:100%;overflow-x:clip}
 
 
 
+
+<section id="stockhistory" class="screen">
+<div class="card"><div class="row between"><b>🕒 Gemensam lagerhistorik</b><button onclick="show('home')">Tillbaka</button></div>
+<p class="muted">Uttag, påfyllningar, saldoändringar och lagerflyttar som registrerats med v35.9 eller senare.</p>
+<div class="row" style="gap:8px;flex-wrap:wrap">
+<select id="stockHistoryPlace" onchange="renderStockHistory()" style="flex:1;min-width:140px"><option value="">Alla lagerplatser</option><option value="jimmy">Jimmys bil</option><option value="oskar">Oskars bil</option><option value="jonathan">Jonathans bil</option><option value="lager">Lagret</option><option value="kemi">Kemi/Övrigt</option></select>
+<select id="stockHistoryType" onchange="renderStockHistory()" style="flex:1;min-width:140px"><option value="">Alla händelser</option><option value="flytt">Flyttar</option><option value="uttag">Uttag</option><option value="påfyllning">Påfyllningar</option><option value="saldoändring">Saldoändringar</option></select>
+</div><input id="stockHistoryQuery" placeholder="Sök artikel, namn eller person…" oninput="renderStockHistory()" style="margin-top:8px">
+<div class="row" style="margin-top:8px"><button class="green" onclick="loadStockHistory()">↻ Uppdatera</button><button onclick="chooseStockActor()">👤 <span id="stockActorLabel">Välj person</span></button></div>
+<p id="stockHistoryStatus" class="muted"></p></div><div id="stockHistoryList"></div>
+</section>
 
 <section id="stocklists" class="screen">
 <div class="card">
@@ -1292,7 +1304,8 @@ async function save(){
   const qty=Math.max(0,parseInt(dqty.value)||0),nt=note.value||"";
   inv[key(current)]={done:true,qty:qty,note:nt};localStorage.setItem("inventory_v2",JSON.stringify(inv));
   const place=(current.locations[selected]||{}).place||"";
-  try{if(sbConnected)await saveStockToSupabase(current,selected,qty,place);toastMsg(sbConnected?"Sparat i Supabase":"Sparat lokalt");}
+  const beforeQty=Math.max(0,parseInt(current.locations[selected]?.qty,10)||0);
+  try{if(sbConnected){await saveStockToSupabase(current,selected,qty,place);if(beforeQty!==qty)await recordStockHistorySafe({type:'saldoändring',article:current.id,name:current.name,from:selected,to:selected,qty:qty-beforeQty,oldQty:beforeQty,newQty:qty})}toastMsg(sbConnected?"Sparat i Supabase":"Sparat lokalt");}
   catch(e){toastMsg("Kunde inte spara i Supabase");console.error(e);return;}
   let a=rel(),i=a.findIndex(x=>x.id===current.id),nx=a.slice(i+1).find(x=>!inv[key(x)]?.done);if(nx)openItem(nx.id);else show("home");
 }
@@ -1673,6 +1686,7 @@ async function quickStock(delta){
 
   try{
     await setStockV29(current,p,next,l.place||'');
+    await recordStockHistorySafe({type:delta<0?'uttag':'påfyllning',article:current.id,name:current.name,from:delta<0?p:null,to:delta>0?p:null,qty:Math.abs(delta),oldQty:old,newQty:next});
     await loadSupabase(false);
     const refreshed=allData().find(x=>x.id===current.id);
     if(refreshed)current=refreshed;
@@ -1704,6 +1718,53 @@ function openTransfer(){
   transferQty.value=1;transferActor.value=localStorage.getItem('lg_actor_v1')||'';transferModal.style.display='block';
 }
 function closeTransfer(){transferModal.style.display='none'}
+// v35.9 – gemensam historik (Supabase)
+let stockHistoryRows=[];
+function stockActor(){return localStorage.getItem('lg_actor_v1')||''}
+function chooseStockActor(){
+ const currentActor=stockActor();const answer=prompt('Vem använder appen? Skriv Oskar, Jimmy eller Jonathan:',currentActor);
+ if(answer===null)return currentActor;
+ const name=['Oskar','Jimmy','Jonathan'].find(x=>x.toLowerCase()===answer.trim().toLowerCase());
+ if(!name){toastMsg('Välj Oskar, Jimmy eller Jonathan');return ''}
+ localStorage.setItem('lg_actor_v1',name);updateStockActorLabel();return name;
+}
+function updateStockActorLabel(){const el=document.getElementById('stockActorLabel');if(el)el.textContent=stockActor()||'Välj person'}
+async function recordStockHistory(entry){
+ if(!sbConnected)throw new Error('Supabase är inte anslutet');
+ const actor=entry.actor||stockActor()||'Ej angiven';
+ await sbFetch('stock_history',{method:'POST',headers:{Prefer:'return=minimal'},body:JSON.stringify({
+   actor,event_type:entry.type,article_id:String(entry.article||''),article_name:String(entry.name||''),
+   from_place:entry.from||null,to_place:entry.to||null,quantity:entry.qty||0,
+   old_quantity:entry.oldQty??null,new_quantity:entry.newQty??null
+ })});
+}
+async function recordStockHistorySafe(entry){
+ try{await recordStockHistory(entry);return true}catch(e){console.error('Historik kunde inte sparas',e);toastMsg('Saldo sparat, men historiken kunde inte registreras. Kontrollera SQL för v35.9.');return false}
+}
+function stockHistoryEsc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function openStockHistory(){show('stockhistory');updateStockActorLabel();loadStockHistory()}
+async function loadStockHistory(){
+ const status=document.getElementById('stockHistoryStatus');
+ if(!sbConnected){status.textContent='Anslut Supabase först.';return}
+ status.textContent='Hämtar historik…';
+ try{
+  const rows=await sbFetch('stock_history?select=*&order=created_at.desc&limit=500');
+  stockHistoryRows=rows||[];status.textContent=stockHistoryRows.length+' registrerade händelser (visar högst 500 senaste).';renderStockHistory();
+ }catch(e){status.textContent='Kunde inte läsa historiken. Kör SQL för v35.9 i Supabase först. '+e.message;stockHistoryRows=[];renderStockHistory()}
+}
+function renderStockHistory(){
+ const list=document.getElementById('stockHistoryList');if(!list)return;
+ const q=(document.getElementById('stockHistoryQuery').value||'').toLowerCase().trim();
+ const place=document.getElementById('stockHistoryPlace').value,type=document.getElementById('stockHistoryType').value;
+ const rows=stockHistoryRows.filter(r=>(!type||r.event_type===type)&&(!place||r.from_place===place||r.to_place===place)&&(!q||[r.actor,r.article_id,r.article_name,r.event_type].some(v=>String(v||'').toLowerCase().includes(q))));
+ list.innerHTML=rows.length?rows.map(r=>{
+  const from=r.from_place?names[r.from_place]||r.from_place:'';
+  const to=r.to_place?names[r.to_place]||r.to_place:'';
+  const where=r.event_type==='flytt'?from+' → '+to:(to||from);
+  const change=r.event_type==='saldoändring'?String(r.old_quantity??'?')+' → '+String(r.new_quantity??'?'):'Antal: '+r.quantity;
+  return '<div class="card"><div class="row between"><b>'+stockHistoryEsc(r.event_type)+'</b><span class="muted">'+stockHistoryEsc(new Date(r.created_at).toLocaleString('sv-SE'))+'</span></div><div><b>'+stockHistoryEsc(r.article_id)+'</b> – '+stockHistoryEsc(r.article_name)+'</div><div class="muted">'+stockHistoryEsc(where)+' • '+stockHistoryEsc(change)+'</div><div class="muted">Utfört av: '+stockHistoryEsc(r.actor)+'</div></div>';
+ }).join(''):'<div class="card muted">Inga händelser att visa.</div>';
+}
 async function doTransfer(){
   if(!current)return;
   const actor=transferActor.value;
@@ -1729,6 +1790,7 @@ async function doTransfer(){
       history.unshift(entry);
       localStorage.setItem('lg_transfer_history_v1',JSON.stringify(history.slice(0,200)));
     }catch(logErr){console.warn('Lokal flytthistorik kunde inte sparas',logErr)}
+    await recordStockHistorySafe({type:'flytt',actor,article:current.id,name:current.name,from,to,qty:n});
     closeTransfer();
     await loadSupabase(false);
     const refreshed=allData().find(x=>x.id===current.id);
