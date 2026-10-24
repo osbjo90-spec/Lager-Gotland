@@ -2124,7 +2124,7 @@ function renderTodos(){
       ${getTodoParts(x).map((p,pi)=>`<div style="padding:7px 0;${pi?'border-top:1px solid #ddd':''}">
         <b>${esc(p.article_no||'')}</b> ${esc(p.part_name||'')} × ${Math.max(1,parseInt(p.qty??p.part_qty,10)||1)}
         ${todoPartStockSummary(p)}
-        <div class="muted">${p.status==='Levererad'?'🟢 Levererad':p.status==='Beställd'?'🔵 Beställd':'🟠 Behöver beställas'}</div>
+        <div class="muted">${p.status==='Levererad'?'🟢 Finns på lager':p.status==='Beställd'?'🔵 Beställd':'🟠 Behöver beställas'}</div>
       </div>`).join('')}
     </div>`:''}
     <div class="row">
@@ -2208,7 +2208,7 @@ function renderTodoPartsEditor(){
     <select id="todoPartStatus${i}" onchange="todoPartsDraft[${i}].status=this.value">
       <option value="Behöver beställas" ${p.status==='Behöver beställas'?'selected':''}>🟠 Behöver beställas</option>
       <option value="Beställd" ${p.status==='Beställd'?'selected':''}>🔵 Beställd</option>
-      <option value="Levererad" ${p.status==='Levererad'?'selected':''}>🟢 Levererad</option>
+      <option value="Levererad" ${p.status==='Levererad'?'selected':''}>🟢 Finns på lager</option>
     </select>
   </div>`).join('');
   todoPartsDraft.forEach((p,i)=>todoPartAvailability(i));
@@ -2269,7 +2269,7 @@ async function setPartStatus(id,status){
       body:JSON.stringify({part_status:status})
     });
     await syncTodos();
-    toastMsg(status==='Beställd'?'Delen markerad beställd':'Delen markerad levererad');
+    toastMsg(status==='Beställd'?'Delen markerad beställd':'Delen markerad finns på lager');
   }catch(e){
     toastMsg('Kunde inte uppdatera beställningsstatus');
     console.error(e);
