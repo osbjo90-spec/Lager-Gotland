@@ -399,11 +399,18 @@ html,body{width:100%;max-width:100%;overflow-x:clip}
 <div class="card">
   <b>📤 Uttag</b>
   <p class="muted">Skanna en del eller sök artikelnummer. Välj sedan var delen tas från.</p>
-  <button class="primary" style="width:100%" onclick="startWithdrawScanner()">📷 Skanna del</button>
+  <button class="green" style="width:100%;font-size:18px;padding:15px" onclick="startQuickWithdraw()">⚡ QR-snabbuttag</button>
+  <button class="primary" style="width:100%;margin-top:8px" onclick="startWithdrawScanner()">📷 Skanna del (vanligt uttag)</button>
   <div class="searchline" style="margin-top:10px">
     <input id="withdrawQ" placeholder="Artikelnummer eller namn…">
     <button onclick="renderWithdrawSearch()">Sök</button>
   </div>
+</div>
+<div id="quickWithdrawBox" class="card" style="display:none;border:2px solid #15803d">
+  <div class="row between"><b>⚡ Snabbuttag</b><button onclick="closeQuickWithdraw()">✕ Stäng</button></div>
+  <p class="muted">Skanna QR-/streckkod eller sök artikeln nedan. Din egen bil föreslås automatiskt.</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap"><button class="green" onclick="startQuickScanner()">📷 Skanna kod</button><button onclick="quickUseSearch()">🔎 Sök artikel</button></div>
+  <div id="quickWithdrawArticle" style="margin-top:10px"></div>
 </div>
 <div id="withdrawResults"></div>
 <div id="withdrawAction" style="display:none"></div>
@@ -1487,12 +1494,13 @@ async function startScanner(){
           todoModal.style.display='block';
           return;
         }
-        if(scannerTarget==='withdraw'){
+        if(scannerTarget==='withdraw'||scannerTarget==='quickwithdraw'){
+          const quickMode=scannerTarget==='quickwithdraw';
           scannerTarget='search';
           const list=(typeof allData==='function')?allData():(window.data||window.INVENTORY_DATA||[]);
           const exact=list.find(x=>String(x.id).trim().toLowerCase()===code.toLowerCase());
           show('withdraw');
-          if(exact) selectWithdraw(exact.id);
+          if(exact){if(quickMode)quickSelectWithdraw(exact.id);else selectWithdraw(exact.id);}
           else {
             withdrawQ.value=code;
             renderWithdrawSearch();
@@ -1940,8 +1948,34 @@ function updateRefillBadge(){
   el.textContent=c?'Påfyllning '+c:'Påfyllning';
 }
 
+let quickWithdrawActive=false;
+function quickDefaultPlace(){
+ const actor=(typeof stockActor==='function'?stockActor():'').toLowerCase();
+ return ['oskar','jimmy','jonathan'].includes(actor)?actor:(['oskar','jimmy','jonathan','lager','kemi'].includes(selected)?selected:'oskar');
+}
+function startQuickWithdraw(){
+ openWithdraw();quickWithdrawActive=true;
+ document.getElementById('quickWithdrawBox').style.display='block';
+ document.getElementById('quickWithdrawArticle').innerHTML='<p class="muted">Ingen artikel vald ännu. Skanna eller sök en del.</p>';
+ if(!stockActor())chooseStockActor();
+ startQuickScanner();
+}
+function closeQuickWithdraw(){quickWithdrawActive=false;document.getElementById('quickWithdrawBox').style.display='none';withdrawAction.style.display='none';}
+function startQuickScanner(){scannerTarget='quickwithdraw';startScanner()}
+function quickUseSearch(){withdrawQ.focus();toastMsg('Sök artikeln och välj den i listan')}
+function quickSelectWithdraw(id){
+ quickWithdrawActive=true;
+ document.getElementById('quickWithdrawBox').style.display='block';
+ selectWithdraw(id);
+ const place=document.getElementById('withdrawPlace');if(place)place.value=quickDefaultPlace();
+ const item=withdrawCurrent;
+ document.getElementById('quickWithdrawArticle').innerHTML=item?'<b>Vald artikel:</b> '+esc(item.id)+' – '+esc(item.name):'';
+ // Behåll uttagskontrollerna synliga; lager och antal kan ändras före registrering.
+}
 let withdrawCurrent=null;
 function openWithdraw(){
+  quickWithdrawActive=false;
+  document.getElementById('quickWithdrawBox').style.display='none';
   withdrawCurrent=null;
   withdrawAction.style.display='none';
   withdrawResults.innerHTML='';
@@ -1975,7 +2009,7 @@ function renderWithdrawSearch(){
   // This fixes article cards that looked clickable but did not open.
   withdrawResults.innerHTML=unique.map(x => {
     const encoded=encodeURIComponent(String(x.id||''));
-    return `<div class="card" data-id="${encoded}" onclick="selectWithdraw(decodeURIComponent(this.dataset.id))" style="cursor:pointer">
+    return `<div class="card" data-id="${encoded}" onclick="(quickWithdrawActive?quickSelectWithdraw:selectWithdraw)(decodeURIComponent(this.dataset.id))" style="cursor:pointer">
       <b>${esc(x.id)}</b><br>${esc(x.name)}
     </div>`;
   }).join('')||'<div class="card">Ingen artikel hittades.</div>';
@@ -2025,8 +2059,9 @@ async function doWithdraw(n){
     const saved=Math.max(0,parseInt(withdrawCurrent.locations?.[p]?.qty,10)||0);
     if(saved!==have-n)throw new Error("Fel saldo efter synk");
 
+    await recordStockHistorySafe({type:'uttag',article:articleId,name:withdrawCurrent.name,from:p,qty:n,oldQty:have,newQty:saved});
     updateRefillBadge();
-    selectWithdraw(articleId);
+    if(quickWithdrawActive){quickSelectWithdraw(articleId)}else{selectWithdraw(articleId)}
     renderHome();
     toastMsg('Tog ut '+n+' st från '+names[p]+' • nytt saldo '+saved);
   }catch(e){
