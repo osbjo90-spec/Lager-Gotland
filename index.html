@@ -406,7 +406,16 @@ html,body{width:100%;max-width:100%;overflow-x:clip}
 </section>
 <section id="search" class="screen">
 <div class="card"><b>Sök artikel</b><p class="muted">Sök på artikelnummer eller benämning.</p>
-<div class="searchline"><input id="q" placeholder="Artikelnummer eller namn…"><button class="primary" onclick="renderSearch()">Sök</button></div>
+<div class="searchline"><input id="q" placeholder="Artikelnummer eller namn…" oninput="renderSearch()"><button class="primary" onclick="renderSearch()">Sök</button></div>
+<label class="muted" for="searchStockPlace" style="display:block;margin-top:12px">Sök i lagerplats</label>
+<select id="searchStockPlace" onchange="renderSearch()" style="width:100%;background:white;border:1px solid #ccd5db;border-radius:12px;padding:12px;font:inherit">
+<option value="">Vanlig sökning – även saldo 0</option>
+<option value="jimmy">Jimmys bil – endast saldo över 0</option>
+<option value="oskar">Oskars bil – endast saldo över 0</option>
+<option value="jonathan">Jonathans bil – endast saldo över 0</option>
+<option value="lager">Lagret – endast saldo över 0</option>
+<option value="kemi">Kemi/Övrigt – endast saldo över 0</option>
+</select>
 <button class="primary" style="width:100%;margin-top:10px" onclick="startScanner()">📷 Skanna QR / streckkod</button>
 <button class="green" style="width:100%;margin-top:10px" onclick="show('newpart')">＋ Lägg till ny del</button>
 </div>
@@ -760,11 +769,13 @@ function renderPlaceArticles(){
 }
 
 function renderSearch(){
-  let t=(q.value||"").trim().toLowerCase();
-  // Utan söktext visas vald plats. När man söker letar appen i ALLA lagerställen.
-  let a=t ? allData() : rel();
-  if(t)a=a.filter(x=>x.id.toLowerCase().includes(t)||x.name.toLowerCase().includes(t));
-  results.innerHTML=a.slice(0,100).map(item).join("")||"<span class=muted>Inga träffar i något lager.</span>";
+  const t=(q.value||"").trim().toLowerCase();
+  const place=document.getElementById("searchStockPlace")?.value||"";
+  // Utan lagerfilter fungerar sökningen som tidigare, inklusive saldo 0.
+  // Med lagerfilter visas endast delar med positivt saldo på vald plats.
+  let a=place ? allData().filter(x=>Number(displayQty(x,place))>0) : (t ? allData() : rel());
+  if(t)a=a.filter(x=>String(x.id).toLowerCase().includes(t)||String(x.name).toLowerCase().includes(t));
+  results.innerHTML=a.slice(0,100).map(item).join("")||"<span class=muted>Inga träffar.</span>";
 }
 
 function renderAllStockEditors(){
