@@ -387,8 +387,9 @@ html,body{width:100%;max-width:100%;overflow-x:clip}
   <option value="Oskar">Oskar</option>
   <option value="Jonathan">Jonathan</option>
 </select>
-<label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input id="todoNeedsPart" type="checkbox" onchange="toggleTodoPart()"> Del behöver beställas</label>
+<label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input id="todoNeedsPart" type="checkbox" onchange="toggleTodoPart()"> Koppla reservdelar till jobbet</label>
 <div id="todoPartFields" style="display:none">
+  <p class="muted" style="margin:8px 0">Sök en artikel och se tillgängligt saldo per lagerplats. Inget saldo dras av när du kopplar en del.</p>
   <div id="todoPartsList"></div>
   <button type="button" style="width:100%;margin-top:10px" onclick="addTodoPart()">＋ Lägg till del</button>
 </div>
@@ -2122,6 +2123,7 @@ function renderTodos(){
       <p style="margin:0 0 8px"><b>📦 ${getTodoParts(x).length} ${getTodoParts(x).length===1?'del':'delar'}</b></p>
       ${getTodoParts(x).map((p,pi)=>`<div style="padding:7px 0;${pi?'border-top:1px solid #ddd':''}">
         <b>${esc(p.article_no||'')}</b> ${esc(p.part_name||'')} × ${Math.max(1,parseInt(p.qty??p.part_qty,10)||1)}
+        ${todoPartStockSummary(p)}
         <div class="muted">${p.status==='Levererad'?'🟢 Levererad':p.status==='Beställd'?'🔵 Beställd':'🟠 Behöver beställas'}</div>
       </div>`).join('')}
     </div>`:''}
@@ -2144,17 +2146,64 @@ function getTodoParts(x){
   if(typeof x?.parts==='string'&&x.parts.trim()){try{const p=JSON.parse(x.parts);if(Array.isArray(p)&&p.length)return p}catch(e){}}
   return legacyTodoPart(x);
 }
+// v36.0: artikeluppslag för reservdelar kopplade till ToDo
+function todoArticleMatch(query){
+  const q=String(query||'').trim().toLocaleLowerCase('sv');
+  if(!q)return null;
+  const rows=allData();
+  return rows.find(x=>String(x.id).toLocaleLowerCase('sv')===q)
+    || rows.find(x=>String(x.name).toLocaleLowerCase('sv')===q) || null;
+}
+function todoPartSuggestions(i){
+  const input=document.getElementById('todoArticle'+i);
+  const el=document.getElementById('todoSuggest'+i);
+  if(!input||!el)return;
+  const q=input.value.trim().toLocaleLowerCase('sv');
+  if(!q){el.innerHTML='';todoPartAvailability(i);return}
+  const matches=allData().filter(x=>String(x.id).toLocaleLowerCase('sv').includes(q)||String(x.name).toLocaleLowerCase('sv').includes(q)).slice(0,8);
+  el.innerHTML=matches.map(x=>`<button type="button" style="display:block;width:100%;text-align:left;margin:4px 0;white-space:normal" onclick="chooseTodoArticle(${i},${JSON.stringify(x.id).replace(/</g,'\\u003c')})"><b>${esc(x.id)}</b> – ${esc(x.name)}</button>`).join('') || '<span class="muted">Ingen artikel hittades. Du kan skriva in delen manuellt.</span>';
+  todoPartAvailability(i);
+}
+function chooseTodoArticle(i,id){
+  const x=allData().find(a=>String(a.id)===String(id));if(!x)return;
+  todoPartsDraft[i].article_no=String(x.id);
+  todoPartsDraft[i].part_name=String(x.name);
+  document.getElementById('todoArticle'+i).value=x.id;
+  document.getElementById('todoPartName'+i).value=x.name;
+  document.getElementById('todoSuggest'+i).innerHTML='';
+  todoPartAvailability(i);
+}
+function todoPartAvailability(i){
+  const el=document.getElementById('todoStock'+i);if(!el)return;
+  const q=document.getElementById('todoArticle'+i)?.value||'';
+  const x=todoArticleMatch(q);
+  if(!x){el.innerHTML='<span class="muted">Välj en artikel från förslagen för att visa lagersaldo.</span>';return}
+  const needed=Math.max(1,Number(document.getElementById('todoPartQty'+i)?.value)||1);
+  const places=['jimmy','oskar','jonathan','lager','kemi'];
+  const total=places.reduce((sum,p)=>sum+(Number(displayQty(x,p))||0),0);
+  el.innerHTML=`<b>${total>=needed?'🟢':'🔴'} Totalt ${total} st i lager – behövs ${needed} st</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${places.map(p=>`<span style="border:1px solid #ddd;border-radius:8px;padding:5px 7px;background:${Number(displayQty(x,p))>0?'#e7f6eb':'#f7f7f7'}">${esc(names[p])}: <b>${esc(displayQty(x,p))}</b></span>`).join('')}</div>${total<needed?'<div style="color:#b42318;margin-top:6px">⚠️ Antalet räcker inte i det registrerade lagret.</div>':''}`;
+}
+function todoPartStockSummary(p){
+  const x=todoArticleMatch(p.article_no);
+  if(!x)return '<div class="muted">Ingen matchande lagerartikel – kontrollera artikelnumret.</div>';
+  const qty=Math.max(1,parseInt(p.qty??p.part_qty,10)||1);
+  const places=['jimmy','oskar','jonathan','lager','kemi'];
+  const sum=places.reduce((n,k)=>n+(Number(displayQty(x,k))||0),0);
+  return `<div style="margin-top:5px"><b>${sum>=qty?'🟢':'🔴'} I lager: ${sum} st / behövs ${qty} st</b><div class="muted">${places.filter(k=>Number(displayQty(x,k))>0).map(k=>esc(names[k])+': '+esc(displayQty(x,k))).join(' • ')||'Inget positivt saldo'}</div></div>`;
+}
 function renderTodoPartsEditor(){
   const el=document.getElementById('todoPartsList');if(!el)return;
   el.innerHTML=todoPartsDraft.map((p,i)=>`<div class="card" style="margin:10px 0;background:#fafafa;padding:12px">
     <div class="row between"><b>📦 Del ${i+1}</b>${todoPartsDraft.length>1?`<button type="button" onclick="removeTodoPart(${i})">Ta bort</button>`:''}</div>
     <label class="muted">Artikelnummer</label>
-    <div class="searchline"><input id="todoArticle${i}" value="${esc(p.article_no||'')}" placeholder="Artikelnummer" oninput="todoPartsDraft[${i}].article_no=this.value">
+    <div class="searchline"><input id="todoArticle${i}" value="${esc(p.article_no||'')}" placeholder="Artikelnummer" oninput="todoPartsDraft[${i}].article_no=this.value;todoPartSuggestions(${i})">
       <button type="button" onclick="startTodoScanner(${i})">📷 Skanna</button></div>
+    <div id="todoSuggest${i}" style="margin:5px 0"></div>
     <label class="muted">Del / benämning</label>
     <input id="todoPartName${i}" value="${esc(p.part_name||'')}" placeholder="Benämning" oninput="todoPartsDraft[${i}].part_name=this.value">
     <label class="muted">Antal</label>
-    <input id="todoPartQty${i}" type="number" min="1" value="${Math.max(1,parseInt(p.qty,10)||1)}" oninput="todoPartsDraft[${i}].qty=Math.max(1,parseInt(this.value,10)||1)">
+    <input id="todoPartQty${i}" type="number" min="1" value="${Math.max(1,parseInt(p.qty,10)||1)}" oninput="todoPartsDraft[${i}].qty=Math.max(1,parseInt(this.value,10)||1);todoPartAvailability(${i})">
+    <div id="todoStock${i}" style="margin-top:10px;padding:10px;background:#f5f8fa;border-radius:9px"></div>
     <label class="muted" style="display:block;margin-top:10px">Beställningsstatus</label>
     <select id="todoPartStatus${i}" onchange="todoPartsDraft[${i}].status=this.value">
       <option value="Behöver beställas" ${p.status==='Behöver beställas'?'selected':''}>🟠 Behöver beställas</option>
@@ -2162,6 +2211,7 @@ function renderTodoPartsEditor(){
       <option value="Levererad" ${p.status==='Levererad'?'selected':''}>🟢 Levererad</option>
     </select>
   </div>`).join('');
+  todoPartsDraft.forEach((p,i)=>todoPartAvailability(i));
 }
 function addTodoPart(){todoPartsDraft.push({article_no:'',part_name:'',qty:1,status:'Behöver beställas'});renderTodoPartsEditor()}
 function removeTodoPart(i){todoPartsDraft.splice(i,1);if(!todoPartsDraft.length)addTodoPart();else renderTodoPartsEditor()}
